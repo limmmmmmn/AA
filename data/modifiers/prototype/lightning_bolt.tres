@@ -1,0 +1,20 @@
+[gd_resource type="Resource" script_class="ModifierData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/modifier_data.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+id = &"lightning_bolt"
+display_name = "라이트닝볼트"
+description = "MP 4 소모. 적 1에게 전기 데미지, 25% 확률로 옆 적도 같이."
+cost = 0
+max_level = 3
+rarity = 1
+category = 1
+required_party_member_id = &"mage"
+required_modifier_id = &"fireburst"
+level_up_only = true
+effect_data = {
+"lightning_damage_flat": 14,
+"lightning_chain_chance": 0.25
+}

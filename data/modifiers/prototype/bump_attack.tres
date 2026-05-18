@@ -1,0 +1,17 @@
+[gd_resource type="Resource" script_class="ModifierData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/modifier_data.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+id = &"bump_attack"
+display_name = "Bump Attack"
+description = "파티가 전투 창문에 부딪힐 때 안의 적에게 데미지를 준다."
+cost = 20
+max_level = 1
+rarity = 1
+category = 1
+level_up_only = true
+effect_data = {
+"party_bump_damage_ratio": 0.1
+}

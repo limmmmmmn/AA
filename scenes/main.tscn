@@ -1,0 +1,163 @@
+[gd_scene format=3 uid="uid://cqf6bpvn7qq6m"]
+
+[ext_resource type="Script" path="res://scripts/runtime/minimal_main.gd" id="1_main"]
+[ext_resource type="Texture2D" uid="uid://dtnw65msodpsj" path="res://assets/sprites/characters/hero_01.png" id="2_hero"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_background"]
+bg_color = Color(0.09, 0.105, 0.12, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_field"]
+bg_color = Color(0.18, 0.42, 0.24, 1)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+border_color = Color(0.82, 0.92, 0.64, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_settlement"]
+bg_color = Color(0.05, 0.055, 0.075, 0.96)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+border_color = Color(1, 0.95, 0.7, 1)
+
+[sub_resource type="LabelSettings" id="LabelSettings_large"]
+font_size = 28
+font_color = Color(1, 0.98, 0.82, 1)
+outline_size = 5
+outline_color = Color(0, 0, 0, 0.85)
+
+[sub_resource type="LabelSettings" id="LabelSettings_small"]
+font_size = 14
+font_color = Color(0.92, 0.96, 1, 1)
+outline_size = 3
+outline_color = Color(0, 0, 0, 0.75)
+
+[node name="Main" type="Node2D"]
+script = ExtResource("1_main")
+
+[node name="Background" type="Panel" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_right = 640.0
+offset_bottom = 360.0
+theme_override_styles/panel = SubResource("StyleBoxFlat_background")
+
+[node name="Field" type="Panel" parent="."]
+unique_name_in_owner = true
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -120.0
+offset_top = -80.0
+offset_right = 120.0
+offset_bottom = 80.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_field")
+
+[node name="HeroShadow" type="Polygon2D" parent="."]
+position = Vector2(320, 198)
+color = Color(0, 0, 0, 0.32)
+polygon = PackedVector2Array(-12, 0, -8, -3, 8, -3, 12, 0, 8, 3, -8, 3)
+
+[node name="Hero" type="Sprite2D" parent="."]
+unique_name_in_owner = true
+position = Vector2(320, 184)
+texture = ExtResource("2_hero")
+hframes = 3
+vframes = 4
+frame = 1
+
+[node name="UI" type="CanvasLayer" parent="."]
+
+[node name="StageLabel" type="Label" parent="UI"]
+unique_name_in_owner = true
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -120.0
+offset_top = 18.0
+offset_right = 120.0
+offset_bottom = 48.0
+grow_horizontal = 2
+text = "Stage 1"
+label_settings = SubResource("LabelSettings_small")
+horizontal_alignment = 1
+
+[node name="TimerLabel" type="Label" parent="UI"]
+unique_name_in_owner = true
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -160.0
+offset_top = -112.0
+offset_right = 160.0
+offset_bottom = -64.0
+grow_horizontal = 2
+grow_vertical = 2
+text = "3"
+label_settings = SubResource("LabelSettings_large")
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="Settlement" type="Panel" parent="UI"]
+unique_name_in_owner = true
+visible = false
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -132.0
+offset_top = -72.0
+offset_right = 132.0
+offset_bottom = 72.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_settlement")
+
+[node name="SettlementTitle" type="Label" parent="UI/Settlement"]
+unique_name_in_owner = true
+anchors_preset = 10
+anchor_right = 1.0
+offset_left = 12.0
+offset_top = 18.0
+offset_right = -12.0
+offset_bottom = 54.0
+text = "게임 클리어!"
+label_settings = SubResource("LabelSettings_large")
+horizontal_alignment = 1
+
+[node name="SettlementBody" type="Label" parent="UI/Settlement"]
+unique_name_in_owner = true
+anchors_preset = 10
+anchor_right = 1.0
+offset_left = 12.0
+offset_top = 62.0
+offset_right = -12.0
+offset_bottom = 90.0
+text = "Stage 1 정산"
+label_settings = SubResource("LabelSettings_small")
+horizontal_alignment = 1
+
+[node name="ContinueButton" type="Button" parent="UI/Settlement"]
+unique_name_in_owner = true
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -48.0
+offset_top = -42.0
+offset_right = 48.0
+offset_bottom = -14.0
+grow_horizontal = 2
+grow_vertical = 0
+text = "계속"

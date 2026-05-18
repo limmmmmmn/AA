@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="ModifierData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/modifier_data.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+id = &"swift_boots"
+display_name = "신속의 부츠"
+description = "필드 이동 속도를 올린다. 레벨이 오를수록 효과가 줄어든다."
+cost = 10
+rarity = 0
+category = 0
+effect_data = {
+"move_speed_flat": 10
+}

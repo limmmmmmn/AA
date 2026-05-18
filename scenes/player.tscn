@@ -1,0 +1,31 @@
+[gd_scene format=3 uid="uid://cme3wlgx5y10e"]
+
+[ext_resource type="Script" uid="uid://dh1a5ifn07g2g" path="res://scripts/runtime/player.gd" id="1_player"]
+[ext_resource type="Script" uid="uid://btjli1dl6v2oe" path="res://scripts/runtime/character_visual.gd" id="2_visual"]
+[ext_resource type="Script" path="res://scripts/runtime/field_shadow.gd" id="3_shadow"]
+
+[sub_resource type="RectangleShape2D" id="RectShape_player"]
+size = Vector2(10, 12)
+
+[node name="Player" type="CharacterBody2D" unique_id=1244797625]
+collision_mask = 0
+script = ExtResource("1_player")
+
+[node name="Shadow" type="Polygon2D" parent="." unique_id=309287374]
+position = Vector2(0, 10)
+script = ExtResource("3_shadow")
+shadow_size = Vector2(15, 5)
+shadow_alpha = 0.36
+
+[node name="Visual" type="Sprite2D" parent="." unique_id=798965991]
+script = ExtResource("2_visual")
+
+[node name="Camera2D" type="Camera2D" parent="." unique_id=488853346]
+limit_left = 0
+limit_top = 0
+limit_right = 640
+limit_bottom = 480
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="." unique_id=1156702480]
+position = Vector2(0, 4)
+shape = SubResource("RectShape_player")

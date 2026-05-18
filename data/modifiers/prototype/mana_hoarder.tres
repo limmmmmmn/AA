@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="ModifierData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/modifier_data.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+id = &"mana_hoarder"
+display_name = "마나 수집가"
+description = "마법사: 최대 MP +6. 파이어월을 익혀야 등장한다."
+cost = 0
+max_level = 2
+rarity = 2
+category = 0
+required_party_member_id = &"mage"
+required_modifier_id = &"fireburst"
+level_up_only = true
+effect_data = {
+"mp_flat": 6
+}

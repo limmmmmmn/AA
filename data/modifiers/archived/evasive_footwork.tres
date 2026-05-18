@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="ModifierData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/modifier_data.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+id = &"evasive_footwork"
+display_name = "회피 보법"
+description = "적 공격을 15% 확률로 회피."
+cost = 20
+rarity = 1
+category = 1
+effect_data = {
+"evade_chance": 0.15
+}

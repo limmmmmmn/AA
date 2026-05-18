@@ -1,0 +1,20 @@
+[gd_resource type="Resource" script_class="ModifierData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/modifier_data.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+id = &"backstep"
+display_name = "백스텝"
+description = "MP 2 소모. 본인 회피 +75% 1턴, 다음 공격 1.5배."
+cost = 0
+max_level = 3
+rarity = 1
+category = 1
+required_party_member_id = &"thief"
+required_modifier_id = &"pilfer"
+level_up_only = true
+effect_data = {
+"thief_evade_self_chance": 0.75,
+"thief_next_attack_mult": 1.5
+}

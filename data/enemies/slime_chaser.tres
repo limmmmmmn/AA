@@ -1,0 +1,22 @@
+[gd_resource type="Resource" script_class="EnemyData" format=3 uid="uid://csowfhe57ev4s"]
+
+[ext_resource type="Script" uid="uid://cg0rdfbebp8i0" path="res://scripts/data/enemy_data.gd" id="1_script"]
+[ext_resource type="Texture2D" uid="uid://jyyro4gg828s" path="res://assets/sprites/enemies/slime_chaser.png" id="2_sprite"]
+
+[resource]
+script = ExtResource("1_script")
+id = &"slime_chaser"
+display_name = "Slime Chaser"
+sprite = ExtResource("2_sprite")
+max_hp = 28
+attack = 6
+agility = 6
+field_chase_speed = 54.0
+field_detect_radius = 130.0
+field_lose_radius = 260.0
+field_charge_enabled = true
+field_charge_speed = 116.0
+field_charge_duration = 0.2
+field_charge_cooldown = 2.2
+gold_reward = 5
+xp_reward = 5

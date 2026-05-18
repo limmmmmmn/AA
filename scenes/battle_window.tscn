@@ -1,0 +1,114 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="Script" path="res://scripts/runtime/battle_window.gd" id="1_window"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_bg"]
+bg_color = Color(1, 1, 1, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0, 0, 0, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_log"]
+bg_color = Color(1, 1, 1, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0, 0, 0, 1)
+
+[sub_resource type="LabelSettings" id="LabelSettings_text"]
+font_size = 8
+font_color = Color(0, 0, 0, 1)
+
+[sub_resource type="LabelSettings" id="LabelSettings_log"]
+font_size = 7
+font_color = Color(0, 0, 0, 1)
+
+[node name="BattleWindow" type="Control"]
+custom_minimum_size = Vector2(120, 80)
+offset_right = 120.0
+offset_bottom = 80.0
+mouse_filter = 2
+script = ExtResource("1_window")
+
+[node name="Background" type="Panel" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_bg")
+
+[node name="NameLabel" type="Label" parent="."]
+unique_name_in_owner = true
+visible = false
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_left = 2.0
+offset_top = 2.0
+offset_right = -2.0
+offset_bottom = 12.0
+mouse_filter = 2
+text = "Enemy"
+label_settings = SubResource("LabelSettings_text")
+horizontal_alignment = 1
+
+[node name="EnemyAnchor" type="Node2D" parent="."]
+unique_name_in_owner = true
+position = Vector2(60, 40)
+
+[node name="HPLabel" type="Label" parent="."]
+unique_name_in_owner = true
+visible = false
+layout_mode = 1
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 2.0
+offset_top = -22.0
+offset_right = -2.0
+offset_bottom = -12.0
+mouse_filter = 2
+text = "HP -/-"
+label_settings = SubResource("LabelSettings_text")
+horizontal_alignment = 1
+
+[node name="LogPanel" type="Panel" parent="."]
+layout_mode = 1
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 4.0
+offset_top = -24.0
+offset_right = -4.0
+offset_bottom = -4.0
+mouse_filter = 2
+clip_contents = true
+theme_override_styles/panel = SubResource("StyleBoxFlat_log")
+
+[node name="LogLabel" type="Label" parent="LogPanel"]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 2.0
+offset_top = 2.0
+offset_right = -2.0
+offset_bottom = -2.0
+mouse_filter = 2
+text = ""
+label_settings = SubResource("LabelSettings_log")
+horizontal_alignment = 1
+vertical_alignment = 1
+autowrap_mode = 1
+clip_text = true
+max_lines_visible = 1
+
+[node name="TurnTimer" type="Timer" parent="."]
+wait_time = 0.5

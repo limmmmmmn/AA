@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="ModifierData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/modifier_data.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+id = &"thief_vigor"
+display_name = "도적의 활력"
+description = "도적 최대 HP +10, 그만큼 회복."
+cost = 6
+rarity = 0
+category = 0
+required_party_member_id = &"thief"
+effect_data = {
+"hp_flat": 10
+}

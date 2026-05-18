@@ -1,0 +1,20 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/runtime/field_campfire.gd" id="1_campfire"]
+[ext_resource type="Texture2D" path="res://assets/sprites/objects/bonfire.png" id="2_sprite"]
+
+[sub_resource type="CircleShape2D" id="CircleShape_trigger"]
+radius = 14.0
+
+[node name="FieldCampfire" type="Area2D"]
+collision_layer = 0
+collision_mask = 1
+script = ExtResource("1_campfire")
+
+[node name="Sprite" type="Sprite2D" parent="."]
+texture = ExtResource("2_sprite")
+centered = true
+texture_filter = 1
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+shape = SubResource("CircleShape_trigger")

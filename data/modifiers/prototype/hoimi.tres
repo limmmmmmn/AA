@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="ModifierData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/modifier_data.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+id = &"hoimi"
+display_name = "호이미"
+description = "MP 3 소모. 자신 또는 가장 다친 아군을 약하게 회복."
+cost = 0
+max_level = 3
+rarity = 1
+category = 1
+required_party_member_id = &"hero"
+required_modifier_id = &"heavy_strike"
+level_up_only = true
+effect_data = {
+"hero_heal_flat": 6
+}

@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="ModifierData" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/modifier_data.gd" id="1_script"]
+[ext_resource type="Resource" path="res://data/characters/thief.tres" id="2_thief"]
+
+[resource]
+script = ExtResource("1_script")
+id = &"recruit_thief"
+display_name = "도적 영입"
+description = "도적이 레벨업하며 훔치기를 배운다. MP 2로 적에게서 1G를 훔친다."
+cost = 30
+max_level = 1
+rarity = 1
+category = 3
+companion_data = ExtResource("2_thief")

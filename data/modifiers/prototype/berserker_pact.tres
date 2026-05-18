@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="ModifierData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/modifier_data.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+id = &"berserker_pact"
+display_name = "광폭의 서약"
+description = "도적: 공격력 +5, 그러나 방어력 -2. 정확함 대신 잔혹함을 택한다."
+cost = 0
+max_level = 1
+rarity = 2
+category = 0
+required_party_member_id = &"thief"
+level_up_only = true
+effect_data = {
+"atk_flat": 5,
+"def_flat": -2
+}

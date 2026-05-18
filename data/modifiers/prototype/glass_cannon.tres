@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="ModifierData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/modifier_data.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+id = &"glass_cannon"
+display_name = "유리 대포"
+description = "용사: 공격력 +6, 그러나 최대 HP -10. 무모한 자만이 살아남는다."
+cost = 0
+max_level = 1
+rarity = 2
+category = 0
+required_party_member_id = &"hero"
+level_up_only = true
+effect_data = {
+"atk_flat": 6,
+"hp_flat": -10
+}

@@ -1,0 +1,20 @@
+[gd_resource type="Resource" script_class="ModifierData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/modifier_data.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+id = &"pilfer"
+display_name = "훔치기"
+description = "MP 2 소모. 적에게서 1G를 훔친다. 적 한 마리당 한 번만."
+cost = 20
+max_level = 3
+rarity = 1
+category = 1
+required_party_member_id = &"thief"
+required_modifier_id = &"bump_attack"
+level_up_only = true
+effect_data = {
+"thief_steal_chance": 1.0,
+"thief_steal_gold": 1
+}

@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="ModifierData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/modifier_data.gd" id="1_script"]
+
+[resource]
+script = ExtResource("1_script")
+id = &"auto_battle"
+display_name = "자동전투"
+description = "전투창이 스스로 돈다. 너는 더 이상 한 번에 한 마리만 잡지 않아도 된다."
+cost = 0
+max_level = 1
+rarity = 1
+category = 1
+level_up_only = true
+effect_data = {}
