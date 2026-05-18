@@ -6,42 +6,17 @@ signal node_exited_signal(node: SkillNode)
 signal exit_requested(direction: Vector2)
 
 const STEP_X: float = 26.0
-const STEP_Y: float = 20.0
+const STEP_Y: float = 16.0
 const NODE_HALF: Vector2 = Vector2(8, 8)
 const ZOOM_MIN: float = 0.35
 const ZOOM_MAX: float = 2.0
 const ZOOM_FACTOR: float = 1.12
 const LINE_COLOR: Color = Color(1.0, 1.0, 1.0, 0.82)
 const LINE_WIDTH: float = 2.0
-
-const DEFINED_NODES: Dictionary = {
-	Vector2i(0, 0): {
-		"skill_id": &"",
-		"skill_name": "Root",
-		"description": "아직 선택되지 않은 세계의 중심.",
-		"cost": 0,
-	},
-	Vector2i(0, -2): {
-		"skill_id": &"gold",
-		"skill_name": "Gold",
-		"description": "세상의 모든 것에 값을 매기는 첫 이름. 도스토옙스키는 돈을 \"주조된 자유\"라 불렀다.",
-		"cost": 3,
-	},
-	Vector2i(0, -3): {
-		"skill_id": &"monster",
-		"skill_name": "Monster",
-		"description": "움직이는 적의 형상이 세계에 나타난다.",
-		"cost": 12,
-	},
-	Vector2i(0, -4): {
-		"skill_id": &"spawner",
-		"skill_name": "Spawner",
-		"description": "세계가 적을 다시 불러내기 시작한다. 시간이 지나면 새로운 몬스터가 나타난다.",
-		"cost": 24,
-	},
-}
+const NODE_DATA_DIR: String = "res://data/skill_nodes"
 
 var _skill_node_scene: PackedScene = preload("res://scenes/ui/skill_node.tscn")
+var _defined_nodes: Dictionary = {}
 var _nodes: Dictionary = {}
 var _edges: Dictionary = {}
 var _edge_progress: Dictionary = {}
@@ -55,6 +30,7 @@ func _ready() -> void:
 	focus_mode = Control.FOCUS_ALL
 	_center = custom_minimum_size / 2.0
 	pivot_offset = _center
+	_load_node_definitions()
 	_spawn_node(Vector2i.ZERO)
 	_expand_around(Vector2i.ZERO)
 	_select_first_available(Vector2i(0, -2))
@@ -80,12 +56,12 @@ func _spawn_node(grid: Vector2i) -> SkillNode:
 		return _nodes[grid]
 
 	var node: SkillNode = _skill_node_scene.instantiate()
-	var defined: Variant = DEFINED_NODES.get(grid)
+	var defined: SkillNodeData = _defined_nodes.get(grid) as SkillNodeData
 	if defined != null:
-		node.skill_id = defined["skill_id"]
-		node.skill_name = defined["skill_name"]
-		node.description = defined["description"]
-		node.cost = defined["cost"]
+		node.skill_id = defined.skill_id
+		node.skill_name = defined.skill_name
+		node.description = defined.description
+		node.cost = defined.cost
 	else:
 		node.skill_id = &""
 		node.skill_name = "???"
@@ -106,6 +82,25 @@ func _spawn_node(grid: Vector2i) -> SkillNode:
 		_expand_around(grid)
 
 	return node
+
+
+func _load_node_definitions() -> void:
+	_defined_nodes.clear()
+	var dir: DirAccess = DirAccess.open(NODE_DATA_DIR)
+	if dir == null:
+		push_warning("Skill node data directory not found: %s" % NODE_DATA_DIR)
+		return
+
+	dir.list_dir_begin()
+	var file_name: String = dir.get_next()
+	while not file_name.is_empty():
+		if not dir.current_is_dir() and file_name.ends_with(".tres"):
+			var path: String = "%s/%s" % [NODE_DATA_DIR, file_name]
+			var data: SkillNodeData = ResourceLoader.load(path) as SkillNodeData
+			if data != null:
+				_defined_nodes[data.grid] = data
+		file_name = dir.get_next()
+	dir.list_dir_end()
 
 
 func _expand_around(grid: Vector2i, animate: bool = false) -> void:

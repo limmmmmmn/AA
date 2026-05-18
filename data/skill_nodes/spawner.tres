@@ -1,0 +1,11 @@
+[gd_resource type="Resource" script_class="SkillNodeData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/skill_node_data.gd" id="1_data"]
+
+[resource]
+script = ExtResource("1_data")
+grid = Vector2i(0, -4)
+skill_id = &"spawner"
+skill_name = "Spawner"
+description = "세계가 적을 다시 불러내기 시작한다. 시간이 지나면 새로운 몬스터가 나타난다."
+cost = 24

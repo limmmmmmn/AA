@@ -1,0 +1,11 @@
+[gd_resource type="Resource" script_class="SkillNodeData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/skill_node_data.gd" id="1_data"]
+
+[resource]
+script = ExtResource("1_data")
+grid = Vector2i(-2, 0)
+skill_id = &"item"
+skill_name = "Item"
+description = "필드에 장비가 떨어지기 시작한다. 첫 검은 작지만, 슬라임에게는 충분히 날카롭다."
+cost = 6

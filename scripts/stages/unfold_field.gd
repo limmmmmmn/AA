@@ -5,11 +5,12 @@ signal battle_requested(monster: Node2D)
 
 const SLIME_MARKER_SCENE: PackedScene = preload("res://scenes/entities/slime_marker.tscn")
 const GOLD_PICKUP_SCENE: PackedScene = preload("res://scenes/entities/gold_pickup.tscn")
+const SWORD_PICKUP_SCENE: PackedScene = preload("res://scenes/entities/sword_pickup.tscn")
 const TILE_SIZE: float = 16.0
 const CONTINUOUS_MOVE_SPEED: float = 84.0
 const PICKUP_RADIUS: float = 10.0
+const ITEM_PICKUP_RADIUS: float = 12.0
 const ENCOUNTER_RADIUS: float = 14.0
-const MAP_EXPAND_LINES_PER_UNLOCK: int = 2
 const BATTLE_GOLD_DROPS: int = 3
 const RANDOM_DROP_MARGIN: float = 18.0
 const HERO_SAFE_RADIUS: float = 34.0
@@ -19,24 +20,22 @@ const MAX_SPAWNED_MONSTERS: int = 4
 @onready var hero: Hero = $Hero
 @onready var background: ColorRect = $Background
 @onready var pickups_root: Node2D = $Pickups
+@onready var items_root: Node2D = $Items
 @onready var monsters_root: Node2D = $Monsters
 
 var _rng: RandomNumberGenerator = RandomNumberGenerator.new()
 var _is_input_enabled: bool = true
-var _base_field_position: Vector2 = Vector2.ZERO
-var _base_field_size: Vector2 = Vector2.ZERO
 var _encounter_locked: bool = false
 var _monster_spawn_timer: float = MONSTER_SPAWN_INTERVAL
 
 
 func _ready() -> void:
 	_rng.randomize()
-	_base_field_position = background.position
-	_base_field_size = background.size
-	_apply_map_expansion()
 	RunState.skill_unlocked.connect(_on_skill_unlocked)
 	_refresh_gold_pickups()
 	_ensure_world_gold_pickup()
+	_refresh_item_pickups()
+	_ensure_sword_pickup()
 	_refresh_monsters()
 
 
@@ -48,6 +47,16 @@ func set_input_enabled(is_enabled: bool) -> void:
 		var monster: Node = child as Node
 		if monster != null:
 			monster.set_process(is_enabled)
+
+
+func prepare_monster_for_battle(monster: Node2D) -> void:
+	if is_instance_valid(monster):
+		monster.set_process(false)
+		monster.visible = false
+
+
+func get_hero_global_position() -> Vector2:
+	return hero.global_position
 
 
 func _process(delta: float) -> void:
@@ -96,12 +105,14 @@ func _move_continuous(delta: float) -> void:
 	var dir: Vector2 = _input_dir()
 	if dir == Vector2.ZERO:
 		hero.set_moving(false)
+		_try_item_pickup()
 		_try_monster_encounter()
 		return
 	hero.set_moving(true)
 	hero.face(_dir_to_facing(dir))
 	hero.position = _clamp_to_field(hero.position + dir * CONTINUOUS_MOVE_SPEED * delta)
 	_try_pickup()
+	_try_item_pickup()
 	_try_monster_encounter()
 
 
@@ -111,6 +122,14 @@ func _try_pickup() -> void:
 	for child in pickups_root.get_children():
 		if child is GoldPickup and child.position.distance_to(hero.position) <= PICKUP_RADIUS:
 			RunState.add_gold(child.VALUE)
+			child.collect()
+
+
+func _try_item_pickup() -> void:
+	if not RunState.is_unlocked(&"item") or RunState.sword_collected:
+		return
+	for child in items_root.get_children():
+		if child is SwordPickup and child.position.distance_to(hero.position) <= ITEM_PICKUP_RADIUS:
 			child.collect()
 
 
@@ -128,6 +147,22 @@ func _ensure_world_gold_pickup() -> void:
 	if pickups_root.get_child_count() > 0:
 		return
 	_spawn_gold_pickup(_random_field_position())
+
+
+func _refresh_item_pickups() -> void:
+	var item_visible: bool = RunState.is_unlocked(&"item") and not RunState.sword_collected
+	for child in items_root.get_children():
+		if child is SwordPickup:
+			child.visible = item_visible
+			child.process_mode = Node.PROCESS_MODE_INHERIT if item_visible else Node.PROCESS_MODE_DISABLED
+
+
+func _ensure_sword_pickup() -> void:
+	if not RunState.is_unlocked(&"item") or RunState.sword_collected:
+		return
+	if items_root.get_child_count() > 0:
+		return
+	_spawn_sword_pickup(_random_field_position())
 
 
 func _refresh_monsters() -> void:
@@ -178,6 +213,14 @@ func _spawn_gold_pickup(pos: Vector2) -> void:
 	pickups_root.add_child(pickup)
 
 
+func _spawn_sword_pickup(pos: Vector2) -> void:
+	var pickup: SwordPickup = SWORD_PICKUP_SCENE.instantiate() as SwordPickup
+	pickup.position = _clamp_to_field(pos)
+	pickup.visible = RunState.is_unlocked(&"item") and not RunState.sword_collected
+	pickup.process_mode = Node.PROCESS_MODE_INHERIT if pickup.visible else Node.PROCESS_MODE_DISABLED
+	items_root.add_child(pickup)
+
+
 func _try_monster_encounter() -> void:
 	if _encounter_locked or not RunState.is_unlocked(&"monster"):
 		return
@@ -203,13 +246,6 @@ func _process_monster_spawner(delta: float) -> void:
 
 func _reset_monster_spawn_timer() -> void:
 	_monster_spawn_timer = MONSTER_SPAWN_INTERVAL
-
-
-func _apply_map_expansion() -> void:
-	var side_expand: float = float(RunState.timer_bonus_seconds * MAP_EXPAND_LINES_PER_UNLOCK) * TILE_SIZE
-	var expand: Vector2 = Vector2.ONE * side_expand
-	background.position = _base_field_position - expand
-	background.size = _base_field_size + expand * 2.0
 
 
 func _is_in_bounds(pos: Vector2) -> bool:
@@ -244,7 +280,6 @@ func _clamp_to_field(pos: Vector2) -> Vector2:
 
 
 func _on_skill_unlocked(skill_id: StringName) -> void:
-	_apply_map_expansion()
 	if skill_id == &"gold":
 		_refresh_gold_pickups()
 		_ensure_world_gold_pickup()
@@ -252,3 +287,6 @@ func _on_skill_unlocked(skill_id: StringName) -> void:
 		_refresh_monsters()
 	elif skill_id == &"spawner":
 		_reset_monster_spawn_timer()
+	elif skill_id == &"item":
+		_refresh_item_pickups()
+		_ensure_sword_pickup()

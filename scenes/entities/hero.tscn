@@ -10,3 +10,8 @@ script = ExtResource("1_hero")
 texture = ExtResource("2_texture")
 hframes = 3
 frame = 1
+
+[node name="Camera2D" type="Camera2D" parent="."]
+enabled = true
+position_smoothing_enabled = true
+position_smoothing_speed = 8.0

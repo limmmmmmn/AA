@@ -2,9 +2,13 @@ extends Node
 
 signal gold_changed(amount: int)
 signal skill_unlocked(skill_id: StringName)
+signal hero_attack_changed(amount: int)
 
 var gold: int = 0
 var timer_bonus_seconds: int = 0
+var hero_base_attack: int = 2
+var hero_attack_bonus: int = 0
+var sword_collected: bool = false
 var unlocked: Dictionary = {
 	&"movement": true,
 }
@@ -17,6 +21,18 @@ func add_gold(amount: int) -> void:
 
 func is_unlocked(skill_id: StringName) -> bool:
 	return unlocked.get(skill_id, false)
+
+
+func hero_attack() -> int:
+	return hero_base_attack + hero_attack_bonus
+
+
+func collect_sword() -> void:
+	if sword_collected:
+		return
+	sword_collected = true
+	hero_attack_bonus += 2
+	hero_attack_changed.emit(hero_attack())
 
 
 func can_afford(cost: int) -> bool:

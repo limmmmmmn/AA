@@ -83,8 +83,11 @@ func _on_battle_requested(monster: Node2D) -> void:
 	if cleared or in_battle:
 		return
 	in_battle = true
-	field.set_input_enabled(false)
-	battle_view.start(monster)
+	var hero_pos: Vector2 = field.get_hero_global_position()
+	field.prepare_monster_for_battle(monster)
+	if not RunState.is_unlocked(&"battle_movement"):
+		field.set_input_enabled(false)
+	battle_view.start(monster, hero_pos)
 
 
 func _on_battle_finished(monster: Node2D, defeated: bool) -> void:
