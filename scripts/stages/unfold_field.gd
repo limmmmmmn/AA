@@ -6,6 +6,9 @@ signal battle_requested(monster: Node2D)
 const SLIME_MARKER_SCENE: PackedScene = preload("res://scenes/entities/slime_marker.tscn")
 const GOLD_PICKUP_SCENE: PackedScene = preload("res://scenes/entities/gold_pickup.tscn")
 const SWORD_PICKUP_SCENE: PackedScene = preload("res://scenes/entities/sword_pickup.tscn")
+const ARMOR_PICKUP_SCENE: PackedScene = preload("res://scenes/entities/armor_pickup.tscn")
+const COMPANION_PICKUP_SCENE: PackedScene = preload("res://scenes/entities/companion_pickup.tscn")
+const COMPANION_FOLLOWER_SCENE: PackedScene = preload("res://scenes/entities/companion_follower.tscn")
 const TILE_SIZE: float = 16.0
 const CONTINUOUS_MOVE_SPEED: float = 84.0
 const PICKUP_RADIUS: float = 10.0
@@ -16,10 +19,12 @@ const RANDOM_DROP_MARGIN: float = 18.0
 const HERO_SAFE_RADIUS: float = 34.0
 const MONSTER_SPAWN_INTERVAL: float = 3.0
 const MAX_SPAWNED_MONSTERS: int = 4
-const START_SLIME_OFFSETS: Array[Vector2] = [
-	Vector2(-44, -36),
-	Vector2(44, -36),
-]
+const MAX_SPAWNED_MONSTERS_UPGRADED: int = 8
+const PICKUP_RANGE_MULTIPLIER: float = 1.7
+const RANDOM_GOLD_COUNT: int = 3
+const GOLD_PER_KILL: int = 2
+const START_SLIME_COUNT: int = 2
+const START_SLIME_COUNT_EXTRA: int = 2
 
 @onready var hero: Hero = $Hero
 @onready var background: ColorRect = $Background
@@ -37,9 +42,14 @@ var _question_monster: SlimeMarker
 func _ready() -> void:
 	_rng.randomize()
 	RunState.skill_unlocked.connect(_on_skill_unlocked)
+	RunState.companion_recruited_signal.connect(_on_companion_recruited)
 	_refresh_gold_pickups()
 	_refresh_item_pickups()
+	_ensure_random_gold_scatter()
 	_ensure_sword_pickup()
+	_ensure_armor_pickup()
+	_ensure_companion_pickup()
+	_ensure_companion_follower()
 	_refresh_monsters()
 	_sync_depth_sort()
 
@@ -127,18 +137,45 @@ func _move_continuous(delta: float) -> void:
 func _try_pickup() -> void:
 	if not RunState.is_unlocked(&"gold"):
 		return
+	var radius: float = _pickup_radius()
 	for child in pickups_root.get_children():
-		if child is GoldPickup and child.position.distance_to(hero.position) <= PICKUP_RADIUS:
+		if child is GoldPickup and child.position.distance_to(hero.position) <= radius:
 			RunState.add_gold(child.VALUE)
 			child.collect()
 
 
 func _try_item_pickup() -> void:
-	if not RunState.is_unlocked(&"item") or RunState.sword_collected:
-		return
+	var radius: float = _item_pickup_radius()
 	for child in items_root.get_children():
-		if child is SwordPickup and child.position.distance_to(hero.position) <= ITEM_PICKUP_RADIUS:
-			child.collect()
+		var node: Node2D = child as Node2D
+		if node == null:
+			continue
+		if node.position.distance_to(hero.position) > radius:
+			continue
+		if child is SwordPickup and RunState.is_unlocked(&"item") and not RunState.sword_collected:
+			(child as SwordPickup).collect()
+		elif child is ArmorPickup and RunState.is_unlocked(&"item") and not RunState.armor_collected:
+			(child as ArmorPickup).collect()
+		elif child is CompanionPickup and RunState.is_unlocked(&"companion") and not RunState.companion_recruited:
+			(child as CompanionPickup).collect()
+
+
+func _pickup_radius() -> float:
+	if RunState.is_unlocked(&"pickup_range"):
+		return PICKUP_RADIUS * PICKUP_RANGE_MULTIPLIER
+	return PICKUP_RADIUS
+
+
+func _item_pickup_radius() -> float:
+	if RunState.is_unlocked(&"pickup_range"):
+		return ITEM_PICKUP_RADIUS * PICKUP_RANGE_MULTIPLIER
+	return ITEM_PICKUP_RADIUS
+
+
+func _max_monsters() -> int:
+	if RunState.is_unlocked(&"max_enemies"):
+		return MAX_SPAWNED_MONSTERS_UPGRADED
+	return MAX_SPAWNED_MONSTERS
 
 
 func _refresh_gold_pickups() -> void:
@@ -150,26 +187,89 @@ func _refresh_gold_pickups() -> void:
 
 
 func _refresh_item_pickups() -> void:
-	var item_visible: bool = RunState.is_unlocked(&"item") and not RunState.sword_collected
+	var sword_visible: bool = RunState.is_unlocked(&"item") and not RunState.sword_collected
+	var armor_visible: bool = RunState.is_unlocked(&"item") and not RunState.armor_collected
+	var companion_visible: bool = RunState.is_unlocked(&"companion") and not RunState.companion_recruited
 	for child in items_root.get_children():
 		if child is SwordPickup:
-			child.visible = item_visible
-			child.process_mode = Node.PROCESS_MODE_INHERIT if item_visible else Node.PROCESS_MODE_DISABLED
+			child.visible = sword_visible
+			child.process_mode = Node.PROCESS_MODE_INHERIT if sword_visible else Node.PROCESS_MODE_DISABLED
+		elif child is ArmorPickup:
+			child.visible = armor_visible
+			child.process_mode = Node.PROCESS_MODE_INHERIT if armor_visible else Node.PROCESS_MODE_DISABLED
+		elif child is CompanionPickup:
+			child.visible = companion_visible
+			child.process_mode = Node.PROCESS_MODE_INHERIT if companion_visible else Node.PROCESS_MODE_DISABLED
 
 
 func _ensure_sword_pickup() -> void:
 	if not RunState.is_unlocked(&"item") or RunState.sword_collected:
 		return
-	if items_root.get_child_count() > 0:
-		return
+	for child in items_root.get_children():
+		if child is SwordPickup:
+			return
 	_spawn_sword_pickup(_random_field_position())
+
+
+func _ensure_armor_pickup() -> void:
+	if not RunState.is_unlocked(&"item") or RunState.armor_collected:
+		return
+	for child in items_root.get_children():
+		if child is ArmorPickup:
+			return
+	_spawn_armor_pickup(_random_field_position())
+
+
+func _ensure_random_gold_scatter() -> void:
+	if not RunState.is_unlocked(&"gold"):
+		return
+	for child in pickups_root.get_children():
+		if child is GoldPickup:
+			return
+	for i in range(RANDOM_GOLD_COUNT):
+		_spawn_gold_pickup(_random_field_position())
+
+
+func _ensure_companion_pickup() -> void:
+	if not RunState.is_unlocked(&"companion") or RunState.companion_recruited:
+		return
+	for child in items_root.get_children():
+		if child is CompanionPickup:
+			return
+	_spawn_companion_pickup(_random_field_position())
+
+
+func _ensure_companion_follower() -> void:
+	if not RunState.companion_recruited:
+		return
+	var existing: Array[CompanionFollower] = _get_followers()
+	if existing.size() >= 1:
+		return
+	var target: Node2D = hero
+	if not existing.is_empty():
+		target = existing.back()
+	var follower: CompanionFollower = COMPANION_FOLLOWER_SCENE.instantiate() as CompanionFollower
+	follower.set_companion_type(RunState.companion_type)
+	add_child(follower)
+	follower.bind_target(target)
+
+
+func _get_followers() -> Array[CompanionFollower]:
+	var followers: Array[CompanionFollower] = []
+	for child in get_children():
+		if child is CompanionFollower:
+			followers.append(child as CompanionFollower)
+	return followers
 
 
 func _refresh_monsters() -> void:
 	if monsters_root.get_child_count() > 0:
 		return
-	for offset in START_SLIME_OFFSETS:
-		_spawn_slime_marker(hero.position + offset)
+	for _i in range(START_SLIME_COUNT):
+		_spawn_slime_marker(_random_field_position())
+	if RunState.is_unlocked(&"more_slimes"):
+		for _i in range(START_SLIME_COUNT_EXTRA):
+			_spawn_slime_marker(_random_field_position())
 	_reset_monster_spawn_timer()
 
 
@@ -178,25 +278,25 @@ func _spawn_slime_marker(pos: Vector2) -> void:
 	slime.position = pos
 	monsters_root.add_child(slime)
 	if slime is SlimeMarker:
-		(slime as SlimeMarker).setup_wander(_field_bounds(RANDOM_DROP_MARGIN))
+		var sm: SlimeMarker = slime as SlimeMarker
+		sm.setup_wander(_field_bounds(RANDOM_DROP_MARGIN))
+		sm.set_chase_target(hero)
 	if not _is_input_enabled:
 		slime.set_process(false)
 
 
-func finish_battle(monster: Node2D, defeated: bool) -> void:
+func finish_battle(monster: Node2D, defeated: bool, kills: int = 0) -> void:
 	if is_instance_valid(monster):
-		if defeated:
-			_drop_gold_from_monster(monster)
+		if defeated and RunState.is_unlocked(&"gold") and kills > 0:
+			_drop_gold_from_kills(monster.position, kills)
 		monster.queue_free()
 	_encounter_locked = false
 
 
-func _drop_gold_from_monster(monster: Node2D) -> void:
-	var reward: int = 1
-	if monster is SlimeMarker:
-		reward = (monster as SlimeMarker).gold_reward()
-	for i in range(reward):
-		_spawn_gold_pickup(monster.position + _gold_drop_offset(i, reward))
+func _drop_gold_from_kills(origin: Vector2, kills: int) -> void:
+	var total: int = kills * GOLD_PER_KILL
+	for i in range(total):
+		_spawn_gold_pickup(origin + _gold_drop_offset(i, total))
 
 
 func _gold_drop_offset(index: int, total: int) -> Vector2:
@@ -218,6 +318,23 @@ func _spawn_sword_pickup(pos: Vector2) -> void:
 	var pickup: SwordPickup = SWORD_PICKUP_SCENE.instantiate() as SwordPickup
 	pickup.position = _clamp_to_field(pos)
 	pickup.visible = RunState.is_unlocked(&"item") and not RunState.sword_collected
+	pickup.process_mode = Node.PROCESS_MODE_INHERIT if pickup.visible else Node.PROCESS_MODE_DISABLED
+	items_root.add_child(pickup)
+
+
+func _spawn_armor_pickup(pos: Vector2) -> void:
+	var pickup: ArmorPickup = ARMOR_PICKUP_SCENE.instantiate() as ArmorPickup
+	pickup.position = _clamp_to_field(pos)
+	pickup.visible = RunState.is_unlocked(&"item") and not RunState.armor_collected
+	pickup.process_mode = Node.PROCESS_MODE_INHERIT if pickup.visible else Node.PROCESS_MODE_DISABLED
+	items_root.add_child(pickup)
+
+
+func _spawn_companion_pickup(pos: Vector2) -> void:
+	var pickup: CompanionPickup = COMPANION_PICKUP_SCENE.instantiate() as CompanionPickup
+	pickup.position = _clamp_to_field(pos)
+	pickup.setup_random()
+	pickup.visible = RunState.is_unlocked(&"companion") and not RunState.companion_recruited
 	pickup.process_mode = Node.PROCESS_MODE_INHERIT if pickup.visible else Node.PROCESS_MODE_DISABLED
 	items_root.add_child(pickup)
 
@@ -253,7 +370,7 @@ func _set_question_monster(monster: SlimeMarker) -> void:
 func _process_monster_spawner(delta: float) -> void:
 	if not RunState.is_unlocked(&"spawner"):
 		return
-	if monsters_root.get_child_count() >= MAX_SPAWNED_MONSTERS:
+	if monsters_root.get_child_count() >= _max_monsters():
 		return
 	_monster_spawn_timer -= delta
 	if _monster_spawn_timer > 0.0:
@@ -307,8 +424,20 @@ func _sync_depth_sort() -> void:
 
 
 func _on_skill_unlocked(skill_id: StringName) -> void:
-	if skill_id == &"item":
+	if skill_id == &"gold":
+		_refresh_gold_pickups()
+		_ensure_random_gold_scatter()
+	elif skill_id == &"item":
 		_refresh_item_pickups()
 		_ensure_sword_pickup()
+		_ensure_armor_pickup()
+	elif skill_id == &"companion":
+		_refresh_item_pickups()
+		_ensure_companion_pickup()
 	elif skill_id == &"spawner":
 		_reset_monster_spawn_timer()
+
+
+func _on_companion_recruited(_type: StringName) -> void:
+	_refresh_item_pickups()
+	_ensure_companion_follower()

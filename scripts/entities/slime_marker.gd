@@ -4,6 +4,7 @@ extends Node2D
 const WANDER_SPEED: float = 18.0
 const WANDER_RADIUS: float = 36.0
 const ARRIVE_DISTANCE: float = 2.0
+const CHASE_SPEED: float = 12.0
 const MIN_MOVE_SECONDS: float = 1.0
 const MAX_MOVE_SECONDS: float = 2.2
 const MIN_IDLE_SECONDS: float = 0.45
@@ -20,6 +21,7 @@ var _has_bounds: bool = false
 var _is_idle: bool = true
 var _state_time_left: float = 0.0
 var _question_label: Label
+var _chase_target: Node2D
 
 
 func _ready() -> void:
@@ -35,6 +37,10 @@ func setup_wander(bounds: Rect2) -> void:
 	_has_bounds = true
 	_home = position
 	_target = position
+
+
+func set_chase_target(target: Node2D) -> void:
+	_chase_target = target
 
 
 func push_from(source_position: Vector2, distance: float, bounds: Rect2) -> void:
@@ -71,6 +77,10 @@ func max_hp() -> int:
 
 
 func _process(delta: float) -> void:
+	if RunState.is_unlocked(&"monster_chase") and _chase_target != null and is_instance_valid(_chase_target):
+		_chase_hero(delta)
+		return
+
 	_state_time_left -= delta
 	if _is_idle:
 		if _state_time_left <= 0.0:
@@ -82,6 +92,19 @@ func _process(delta: float) -> void:
 		_begin_idle()
 		return
 	position += to_target.normalized() * WANDER_SPEED * delta
+
+
+func _chase_hero(delta: float) -> void:
+	var to_hero: Vector2 = _chase_target.global_position - global_position
+	if to_hero.length() <= ARRIVE_DISTANCE:
+		return
+	var step: Vector2 = to_hero.normalized() * CHASE_SPEED * delta
+	position += step
+	if _has_bounds:
+		position = Vector2(
+			clampf(position.x, _bounds.position.x, _bounds.end.x),
+			clampf(position.y, _bounds.position.y, _bounds.end.y)
+		)
 
 
 func _begin_idle() -> void:

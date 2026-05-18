@@ -4,8 +4,8 @@
 
 [resource]
 script = ExtResource("1_data")
-grid = Vector2i(-3, 0)
-skill_id = &"item"
-skill_name = "Equipment"
-description = "장비가 들판에 떨어진다. 검은 공격력을, 갑옷은 체력을 늘려준다."
-cost = 6
+grid = Vector2i(0, -6)
+skill_id = &"max_enemies"
+skill_name = "Max Enemies"
+description = "필드가 더 많은 적을 품는다. 동시에 머물 수 있는 슬라임이 두 배가 된다."
+cost = 150

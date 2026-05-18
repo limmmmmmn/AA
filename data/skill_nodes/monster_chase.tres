@@ -1,0 +1,11 @@
+[gd_resource type="Resource" script_class="SkillNodeData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/skill_node_data.gd" id="1_data"]
+
+[resource]
+script = ExtResource("1_data")
+grid = Vector2i(0, -3)
+skill_id = &"monster_chase"
+skill_name = "Monster Chase"
+description = "몬스터가 용사를 향해 천천히 다가오기 시작한다. 더 이상 도망치는 슬라임을 쫓을 필요가 없다."
+cost = 20

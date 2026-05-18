@@ -4,8 +4,8 @@
 
 [resource]
 script = ExtResource("1_data")
-grid = Vector2i(-3, 0)
-skill_id = &"item"
-skill_name = "Equipment"
-description = "장비가 들판에 떨어진다. 검은 공격력을, 갑옷은 체력을 늘려준다."
-cost = 6
+grid = Vector2i(-4, 0)
+skill_id = &"magic"
+skill_name = "Magic"
+description = "용사가 마법을 기억해낸다. MP 5와 함께 파이어 주문(3MP, 3뎀)이 깨어난다."
+cost = 70

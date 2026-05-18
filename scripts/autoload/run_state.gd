@@ -3,15 +3,20 @@ extends Node
 signal gold_changed(amount: int)
 signal skill_unlocked(skill_id: StringName)
 signal hero_attack_changed(amount: int)
+signal armor_changed(equipped: bool)
+signal companion_recruited_signal(type: StringName)
 
 var gold: int = 0
 var timer_bonus_seconds: int = 0
 var hero_base_attack: int = 2
 var hero_attack_bonus: int = 0
 var sword_collected: bool = false
+var armor_collected: bool = false
+var companion_recruited: bool = false
+var companion_type: StringName = &""
 var unlocked: Dictionary = {
 	&"movement": true,
-	&"gold": true,
+	&"auto_battle": true,
 }
 
 
@@ -34,6 +39,21 @@ func collect_sword() -> void:
 	sword_collected = true
 	hero_attack_bonus += 2
 	hero_attack_changed.emit(hero_attack())
+
+
+func collect_armor() -> void:
+	if armor_collected:
+		return
+	armor_collected = true
+	armor_changed.emit(true)
+
+
+func recruit_companion(type: StringName) -> void:
+	if companion_recruited:
+		return
+	companion_recruited = true
+	companion_type = type
+	companion_recruited_signal.emit(type)
 
 
 func can_afford(cost: int) -> bool:

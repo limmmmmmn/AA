@@ -1,7 +1,7 @@
 class_name BattleView
 extends Control
 
-signal battle_finished(monster: Node2D, defeated: bool)
+signal battle_finished(monster: Node2D, defeated: bool, kills: int)
 
 const SLIME_TEXTURE: Texture2D = preload("res://assets/sprites/enemies/slime.png")
 const BASIC_ATTACK_TEXTURE: Texture2D = preload("res://assets/sprites/effects/basic_attack.png")
@@ -15,8 +15,14 @@ const AUTO_BATTLE_DELAY: float = 0.35
 const FIELD_BATTLE_GAP: float = 16.0
 const ATTACK_EFFECT_SIZE: Vector2 = Vector2(42, 42)
 const FALLBACK_SLIME_MAX_HP: int = 1
-const HERO_MAX_HP: int = 10
+const HERO_MAX_HP_BASE: int = 10
+const HERO_MAX_HP_ARMORED: int = 15
+const HERO_MAX_MP: int = 5
+const FIRE_SPELL_COST: int = 3
+const FIRE_SPELL_DAMAGE: int = 3
 const SLIME_ATTACK_DAMAGE: int = 1
+const ENEMY_DUAL_OFFSET: float = 22.0
+const ENEMY_SPRITE_Y: float = 36.0
 const STATS_WINDOW_POS: Vector2 = Vector2(182, 70)
 const STATS_WINDOW_SIZE: Vector2 = Vector2(92, 66)
 const COMMAND_WINDOW_POS: Vector2 = Vector2(278, 70)
@@ -33,9 +39,13 @@ var _world_anchor: Vector2 = Vector2.ZERO
 var _battle_side: int = 1
 var _battle_window_home: Vector2 = Vector2.ZERO
 var _slime_hp: int = FALLBACK_SLIME_MAX_HP
-var _hero_hp: int = HERO_MAX_HP
+var _slime_hp_2: int = 0
+var _slime_max_hp: int = FALLBACK_SLIME_MAX_HP
+var _hero_hp: int = HERO_MAX_HP_BASE
+var _hero_mp: int = 0
 var _ending: bool = false
 var _finished: bool = false
+var _last_attacked_sprite: TextureRect
 
 var _command_buttons: Array[Button] = []
 var _stats_window: Panel
@@ -49,6 +59,7 @@ var _stats_label: Label
 var _log_label: Label
 var _gold_label: Label
 var _enemy_sprite: TextureRect
+var _enemy_sprite_2: TextureRect
 var _attack_effect: TextureRect
 
 
@@ -71,13 +82,23 @@ func start(monster: Node2D, hero_global_position: Vector2 = Vector2.ZERO) -> voi
 	_field_mode = RunState.is_unlocked(&"battle_movement")
 	_world_anchor = monster.global_position if is_instance_valid(monster) else Vector2.ZERO
 	_battle_side = 1 if _world_anchor.x >= hero_global_position.x else -1
-	_slime_hp = _monster_max_hp(monster)
-	_hero_hp = HERO_MAX_HP
+	_slime_max_hp = _monster_max_hp(monster)
+	_slime_hp = _slime_max_hp
+	_slime_hp_2 = _slime_max_hp if _initial_enemy_count() >= 2 else 0
+	_last_attacked_sprite = null
+	_hero_hp = _hero_max_hp()
+	_hero_mp = _initial_mp()
 	visible = true
 	_gold_label.text = "G  %d" % RunState.gold
 	_refresh_stats()
 	_enemy_sprite.modulate = Color.WHITE
 	_enemy_sprite.scale = Vector2.ONE
+	_enemy_sprite.visible = true
+	if _enemy_sprite_2 != null:
+		_enemy_sprite_2.modulate = Color.WHITE
+		_enemy_sprite_2.scale = Vector2.ONE
+		_enemy_sprite_2.visible = (_slime_hp_2 > 0)
+	_position_enemy_sprites()
 	_attack_effect.visible = false
 	_apply_visibility_mode()
 	_set_log("슬라임이 나타났다!")
@@ -151,6 +172,8 @@ func _bind_ui() -> void:
 	_enemy_sprite.stretch_mode = TextureRect.STRETCH_KEEP
 	_enemy_sprite.size = SLIME_TEXTURE.get_size()
 	_enemy_sprite.pivot_offset = _enemy_sprite.size * 0.5
+	_enemy_sprite_2 = _make_enemy_sprite()
+	_enemy_sprite.get_parent().add_child(_enemy_sprite_2)
 	_attack_effect.texture = BASIC_ATTACK_TEXTURE
 	_attack_effect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	_attack_effect.size = ATTACK_EFFECT_SIZE
@@ -183,8 +206,8 @@ func _build_ui() -> void:
 
 func _apply_visibility_mode() -> void:
 	_field_mode = RunState.is_unlocked(&"battle_movement")
-	_stats_window.visible = not _field_mode
-	_command_window.visible = not _field_mode
+	_stats_window.visible = false
+	_command_window.visible = false
 	_battle_window.visible = true
 	if _field_mode:
 		_update_field_battle_position()
@@ -310,9 +333,12 @@ func _build_battle_window(parent: Panel) -> void:
 	_enemy_sprite.texture = SLIME_TEXTURE
 	_enemy_sprite.stretch_mode = TextureRect.STRETCH_KEEP
 	_enemy_sprite.size = SLIME_TEXTURE.get_size()
-	_enemy_sprite.position = Vector2((BATTLE_SCENE_RECT.size.x - _enemy_sprite.size.x) * 0.5, 36)
+	_enemy_sprite.position = Vector2((BATTLE_SCENE_RECT.size.x - _enemy_sprite.size.x) * 0.5, ENEMY_SPRITE_Y)
 	_enemy_sprite.pivot_offset = _enemy_sprite.size * 0.5
 	battle_scene.add_child(_enemy_sprite)
+
+	_enemy_sprite_2 = _make_enemy_sprite()
+	battle_scene.add_child(_enemy_sprite_2)
 
 	_attack_effect = TextureRect.new()
 	_attack_effect.name = "AttackEffect"
@@ -372,30 +398,33 @@ func _on_fight_pressed(auto_triggered: bool = false) -> void:
 	await _perform_hero_attack(auto_triggered)
 	if _ending:
 		return
-	if _slime_hp <= 0:
+	if _last_attacked_sprite != null and _is_sprite_dead_now(_last_attacked_sprite):
 		await _show_message("슬라임을 쓰러뜨렸다!")
-		_play_enemy_defeat()
-		await _finish_battle(true)
+		_play_enemy_defeat(_last_attacked_sprite)
+	if _ending:
+		return
+	if _all_enemies_dead():
+		var kills: int = await _award_battle_reward()
+		await _finish_battle(true, kills)
 		return
 	await _show_message("슬라임은 아직 버티고 있다.")
 	await _perform_slime_attack()
 	_resume_commands()
 
 
-func _perform_hero_attack(auto_triggered: bool) -> void:
+func _perform_hero_attack(_auto_triggered: bool) -> void:
 	if _ending:
 		return
-	if auto_triggered:
-		await _show_message("자동 공격!")
-	else:
-		await _show_message("용사의 공격!")
+	await _show_message("공격!")
 	if _ending:
 		return
-	await _play_attack_effect()
+	var target: TextureRect = _first_alive_sprite()
+	_last_attacked_sprite = target
+	await _play_attack_effect(target)
 	if _ending:
 		return
 	var damage: int = RunState.hero_attack()
-	_slime_hp = maxi(0, _slime_hp - damage)
+	_apply_damage_to_first_alive(damage)
 	await _show_message("슬라임에게 %d 데미지!" % damage)
 
 
@@ -405,14 +434,89 @@ func _monster_max_hp(monster: Node2D) -> int:
 	return FALLBACK_SLIME_MAX_HP
 
 
+func _hero_max_hp() -> int:
+	return HERO_MAX_HP_ARMORED if RunState.armor_collected else HERO_MAX_HP_BASE
+
+
+func _initial_mp() -> int:
+	return HERO_MAX_MP if RunState.is_unlocked(&"magic") else 0
+
+
+func _initial_enemy_count() -> int:
+	return 2 if RunState.is_unlocked(&"enemies_per_window") else 1
+
+
+func _make_enemy_sprite() -> TextureRect:
+	var sprite: TextureRect = TextureRect.new()
+	sprite.texture = SLIME_TEXTURE
+	sprite.stretch_mode = TextureRect.STRETCH_KEEP
+	sprite.size = SLIME_TEXTURE.get_size()
+	sprite.pivot_offset = sprite.size * 0.5
+	sprite.visible = false
+	return sprite
+
+
+func _position_enemy_sprites() -> void:
+	var center_x: float = (BATTLE_SCENE_RECT.size.x - _enemy_sprite.size.x) * 0.5
+	if _initial_enemy_count() >= 2:
+		_enemy_sprite.position = Vector2(center_x - ENEMY_DUAL_OFFSET, ENEMY_SPRITE_Y)
+		if _enemy_sprite_2 != null:
+			_enemy_sprite_2.position = Vector2(center_x + ENEMY_DUAL_OFFSET, ENEMY_SPRITE_Y)
+	else:
+		_enemy_sprite.position = Vector2(center_x, ENEMY_SPRITE_Y)
+
+
+func _first_alive_sprite() -> TextureRect:
+	if _slime_hp > 0:
+		return _enemy_sprite
+	if _slime_hp_2 > 0 and _enemy_sprite_2 != null:
+		return _enemy_sprite_2
+	return _enemy_sprite
+
+
+func _apply_damage_to_first_alive(amount: int) -> TextureRect:
+	if _slime_hp > 0:
+		_slime_hp = maxi(0, _slime_hp - amount)
+		return _enemy_sprite
+	if _slime_hp_2 > 0:
+		_slime_hp_2 = maxi(0, _slime_hp_2 - amount)
+		return _enemy_sprite_2
+	return null
+
+
+func _is_sprite_dead_now(sprite: TextureRect) -> bool:
+	if sprite == _enemy_sprite:
+		return _slime_hp <= 0
+	if sprite == _enemy_sprite_2:
+		return _slime_hp_2 <= 0
+	return false
+
+
+func _all_enemies_dead() -> bool:
+	return _slime_hp <= 0 and _slime_hp_2 <= 0
+
+
+func _alive_enemy_count() -> int:
+	var count: int = 0
+	if _slime_hp > 0:
+		count += 1
+	if _slime_hp_2 > 0:
+		count += 1
+	return count
+
+
 func _perform_slime_attack() -> void:
 	if _ending:
 		return
+	var alive: int = _alive_enemy_count()
+	if alive <= 0:
+		return
 	await _show_message("슬라임의 공격!")
 	await _play_slime_attack_effect()
-	_hero_hp = maxi(0, _hero_hp - SLIME_ATTACK_DAMAGE)
+	var damage: int = SLIME_ATTACK_DAMAGE * alive
+	_hero_hp = maxi(0, _hero_hp - damage)
 	_refresh_stats()
-	await _show_message("용사는 %d 데미지를 받았다!" % SLIME_ATTACK_DAMAGE)
+	await _show_message("%d 데미지를 받았다!" % damage)
 
 
 func _start_auto_battle() -> void:
@@ -421,19 +525,23 @@ func _start_auto_battle() -> void:
 	await get_tree().create_timer(AUTO_BATTLE_DELAY).timeout
 	if not visible or _busy or _ending:
 		return
-	await _show_message("용사는 망설임 없이 달려들었다!")
-	if _ending:
-		return
-	while visible and not _busy and not _ending and _slime_hp > 0:
+	while visible and not _busy and not _ending:
 		_busy = true
 		_set_commands_enabled(false)
-		await _perform_hero_attack(true)
+		if _has_spell_ready():
+			await _cast_fire_spell(true)
+		else:
+			await _perform_hero_attack(true)
 		if _ending:
 			return
-		if _slime_hp <= 0:
+		if _last_attacked_sprite != null and _is_sprite_dead_now(_last_attacked_sprite):
 			await _show_message("슬라임을 쓰러뜨렸다!")
-			_play_enemy_defeat()
-			await _finish_battle(true)
+			_play_enemy_defeat(_last_attacked_sprite)
+		if _ending:
+			return
+		if _all_enemies_dead():
+			var kills: int = await _award_battle_reward()
+			await _finish_battle(true, kills)
 			return
 		await _show_message("슬라임은 아직 버티고 있다.")
 		await _perform_slime_attack()
@@ -448,8 +556,50 @@ func _on_spell_pressed() -> void:
 		return
 	_busy = true
 	_set_commands_enabled(false)
-	await _show_message("아직 외운 주문이 없다.")
+	if not RunState.is_unlocked(&"magic"):
+		await _show_message("아직 외운 주문이 없다.")
+		_resume_commands()
+		return
+	if _hero_mp < FIRE_SPELL_COST:
+		await _show_message("MP가 모자라다.")
+		_resume_commands()
+		return
+	await _cast_fire_spell(false)
+	if _ending:
+		return
+	if _last_attacked_sprite != null and _is_sprite_dead_now(_last_attacked_sprite):
+		await _show_message("슬라임을 쓰러뜨렸다!")
+		_play_enemy_defeat(_last_attacked_sprite)
+	if _ending:
+		return
+	if _all_enemies_dead():
+		var kills: int = await _award_battle_reward()
+		await _finish_battle(true, kills)
+		return
+	await _show_message("슬라임은 아직 버티고 있다.")
+	await _perform_slime_attack()
 	_resume_commands()
+
+
+func _has_spell_ready() -> bool:
+	return RunState.is_unlocked(&"magic") and _hero_mp >= FIRE_SPELL_COST
+
+
+func _cast_fire_spell(_auto_triggered: bool) -> void:
+	if _ending:
+		return
+	_hero_mp = maxi(0, _hero_mp - FIRE_SPELL_COST)
+	_refresh_stats()
+	await _show_message("파이어!")
+	if _ending:
+		return
+	var target: TextureRect = _first_alive_sprite()
+	_last_attacked_sprite = target
+	await _play_attack_effect(target)
+	if _ending:
+		return
+	_apply_damage_to_first_alive(FIRE_SPELL_DAMAGE)
+	await _show_message("슬라임에게 %d 데미지!" % FIRE_SPELL_DAMAGE)
 
 
 func _on_item_pressed() -> void:
@@ -534,7 +684,7 @@ func _set_log(text: String) -> void:
 
 func _refresh_stats() -> void:
 	if _stats_label != null:
-		_stats_label.text = "LV   1\nHP  %2d\nMP   0\nAT  %2d" % [_hero_hp, RunState.hero_attack()]
+		_stats_label.text = "LV   1\nHP  %2d\nMP  %2d\nAT  %2d" % [_hero_hp, _hero_mp, RunState.hero_attack()]
 
 
 func _on_hero_attack_changed(_amount: int) -> void:
@@ -556,17 +706,25 @@ func force_timeout_escape() -> void:
 	await _finish_battle(false)
 
 
-func _finish_battle(defeated: bool) -> void:
+func _finish_battle(defeated: bool, kills: int = 0) -> void:
 	if not visible or _finished:
 		return
 	_finished = true
 	_ending = true
 	await get_tree().create_timer(0.28).timeout
 	visible = false
-	battle_finished.emit(_monster, defeated)
+	battle_finished.emit(_monster, defeated, kills)
 	_monster = null
 	_set_commands_enabled(true)
 	_busy = false
+
+
+func _award_battle_reward() -> int:
+	var kills: int = _initial_enemy_count()
+	if not RunState.is_unlocked(&"gold"):
+		RunState.add_gold(kills)
+		await _show_message("골드 획득 +%d" % kills)
+	return kills
 
 
 func _set_commands_enabled(enabled: bool) -> void:
@@ -574,14 +732,18 @@ func _set_commands_enabled(enabled: bool) -> void:
 		button.disabled = not enabled
 
 
-func _play_enemy_defeat() -> void:
-	var tween: Tween = _enemy_sprite.create_tween()
-	tween.tween_property(_enemy_sprite, "modulate:a", 0.0, 0.28)
-	tween.parallel().tween_property(_enemy_sprite, "scale", Vector2(1.25, 0.65), 0.28)
+func _play_enemy_defeat(sprite: TextureRect) -> void:
+	if sprite == null:
+		return
+	var tween: Tween = sprite.create_tween()
+	tween.tween_property(sprite, "modulate:a", 0.0, 0.28)
+	tween.parallel().tween_property(sprite, "scale", Vector2(1.25, 0.65), 0.28)
 
 
-func _play_attack_effect() -> void:
-	var enemy_center: Vector2 = _enemy_sprite.position + _enemy_sprite.size * 0.5
+func _play_attack_effect(target_sprite: TextureRect) -> void:
+	if target_sprite == null:
+		return
+	var enemy_center: Vector2 = target_sprite.position + target_sprite.size * 0.5
 	_attack_effect.visible = true
 	_attack_effect.position = enemy_center - ATTACK_EFFECT_SIZE * 0.5
 	_attack_effect.scale = Vector2(0.92, 0.92)
@@ -596,35 +758,47 @@ func _play_attack_effect() -> void:
 		.set_ease(Tween.EASE_OUT)
 	effect_tween.tween_property(_attack_effect, "modulate:a", 0.0, 0.08).set_delay(0.08)
 
-	var enemy_origin: Vector2 = _enemy_sprite.position
-	var hit_tween: Tween = _enemy_sprite.create_tween()
-	hit_tween.tween_property(_enemy_sprite, "position", enemy_origin + Vector2(2, 0), 0.04)
-	hit_tween.tween_property(_enemy_sprite, "position", enemy_origin, 0.06)
-	hit_tween.parallel().tween_property(_enemy_sprite, "modulate", Color(1.0, 0.9, 0.9, 1.0), 0.04)
-	hit_tween.tween_property(_enemy_sprite, "modulate", Color.WHITE, 0.10)
+	var enemy_origin: Vector2 = target_sprite.position
+	var hit_tween: Tween = target_sprite.create_tween()
+	hit_tween.tween_property(target_sprite, "position", enemy_origin + Vector2(2, 0), 0.04)
+	hit_tween.tween_property(target_sprite, "position", enemy_origin, 0.06)
+	hit_tween.parallel().tween_property(target_sprite, "modulate", Color(1.0, 0.9, 0.9, 1.0), 0.04)
+	hit_tween.tween_property(target_sprite, "modulate", Color.WHITE, 0.10)
 
 	await effect_tween.finished
 	_attack_effect.visible = false
 
 
 func _play_slime_attack_effect() -> void:
-	var enemy_origin: Vector2 = _enemy_sprite.position
-	var tween: Tween = _enemy_sprite.create_tween()
-	tween.tween_property(_enemy_sprite, "position", enemy_origin + Vector2(0, 12), 0.10)\
+	var await_tween: Tween = null
+	if _slime_hp > 0:
+		await_tween = _animate_slime_attack(_enemy_sprite)
+	if _slime_hp_2 > 0 and _enemy_sprite_2 != null:
+		var t2: Tween = _animate_slime_attack(_enemy_sprite_2)
+		if await_tween == null:
+			await_tween = t2
+	if await_tween != null:
+		await await_tween.finished
+
+
+func _animate_slime_attack(sprite: TextureRect) -> Tween:
+	var origin: Vector2 = sprite.position
+	var tween: Tween = sprite.create_tween()
+	tween.tween_property(sprite, "position", origin + Vector2(0, 12), 0.10)\
 		.set_trans(Tween.TRANS_QUAD)\
 		.set_ease(Tween.EASE_OUT)
-	tween.parallel().tween_property(_enemy_sprite, "scale", Vector2(1.12, 0.88), 0.10)\
+	tween.parallel().tween_property(sprite, "scale", Vector2(1.12, 0.88), 0.10)\
 		.set_trans(Tween.TRANS_QUAD)\
 		.set_ease(Tween.EASE_OUT)
-	tween.parallel().tween_property(_enemy_sprite, "modulate", Color(1.0, 0.95, 0.95, 1.0), 0.08)
-	tween.tween_property(_enemy_sprite, "position", enemy_origin, 0.14)\
+	tween.parallel().tween_property(sprite, "modulate", Color(1.0, 0.95, 0.95, 1.0), 0.08)
+	tween.tween_property(sprite, "position", origin, 0.14)\
 		.set_trans(Tween.TRANS_BACK)\
 		.set_ease(Tween.EASE_OUT)
-	tween.parallel().tween_property(_enemy_sprite, "scale", Vector2.ONE, 0.14)\
+	tween.parallel().tween_property(sprite, "scale", Vector2.ONE, 0.14)\
 		.set_trans(Tween.TRANS_BACK)\
 		.set_ease(Tween.EASE_OUT)
-	tween.parallel().tween_property(_enemy_sprite, "modulate", Color.WHITE, 0.12)
-	await tween.finished
+	tween.parallel().tween_property(sprite, "modulate", Color.WHITE, 0.12)
+	return tween
 
 
 func _mark_input_handled() -> void:

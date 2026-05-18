@@ -8,6 +8,6 @@ script = ExtResource("1_enemy_data")
 id = &"slime"
 display_name = "Slime"
 sprite = ExtResource("2_sprite")
-max_hp = 1
+max_hp = 3
 attack = 1
 gold_reward = 1

@@ -112,8 +112,8 @@ func _claim_battle_view() -> BattleView:
 	return view
 
 
-func _on_battle_finished(monster: Node2D, defeated: bool, view: BattleView) -> void:
-	field.finish_battle(monster, defeated)
+func _on_battle_finished(monster: Node2D, defeated: bool, kills: int, view: BattleView) -> void:
+	field.finish_battle(monster, defeated, kills)
 	active_battle_views.erase(view)
 	if view != battle_view:
 		view.queue_free()
