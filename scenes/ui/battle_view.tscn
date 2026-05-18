@@ -1,0 +1,135 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/ui/battle_view.gd" id="1_script"]
+[ext_resource type="Texture2D" path="res://assets/sprites/enemies/slime.png" id="2_slime"]
+[ext_resource type="Texture2D" path="res://assets/sprites/effects/basic_attack.png" id="3_attack"]
+
+[node name="BattleView" type="Control"]
+visible = false
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 0
+script = ExtResource("1_script")
+
+[node name="StatsWindow" type="Panel" parent="."]
+offset_left = 182.0
+offset_top = 70.0
+offset_right = 274.0
+offset_bottom = 136.0
+
+[node name="NameLabel" type="Label" parent="StatsWindow"]
+offset_left = 8.0
+offset_top = 4.0
+offset_right = 84.0
+offset_bottom = 18.0
+text = "Hero"
+
+[node name="GoldLabel" type="Label" parent="StatsWindow"]
+offset_left = 44.0
+offset_top = 4.0
+offset_right = 86.0
+offset_bottom = 18.0
+text = "G  0"
+horizontal_alignment = 2
+
+[node name="StatsLabel" type="Label" parent="StatsWindow"]
+offset_left = 8.0
+offset_top = 18.0
+offset_right = 84.0
+offset_bottom = 64.0
+
+[node name="CommandWindow" type="Panel" parent="."]
+offset_left = 278.0
+offset_top = 70.0
+offset_right = 458.0
+offset_bottom = 136.0
+
+[node name="TitleLabel" type="Label" parent="CommandWindow"]
+offset_left = 0.0
+offset_top = 2.0
+offset_right = 180.0
+offset_bottom = 16.0
+text = "COMMAND"
+horizontal_alignment = 1
+
+[node name="FightButton" type="Button" parent="CommandWindow"]
+offset_left = 14.0
+offset_top = 20.0
+offset_right = 82.0
+offset_bottom = 38.0
+text = "FIGHT"
+
+[node name="SpellButton" type="Button" parent="CommandWindow"]
+offset_left = 98.0
+offset_top = 20.0
+offset_right = 166.0
+offset_bottom = 38.0
+text = "SPELL"
+
+[node name="RunButton" type="Button" parent="CommandWindow"]
+offset_left = 14.0
+offset_top = 44.0
+offset_right = 82.0
+offset_bottom = 62.0
+text = "RUN"
+
+[node name="ItemButton" type="Button" parent="CommandWindow"]
+offset_left = 98.0
+offset_top = 44.0
+offset_right = 166.0
+offset_bottom = 62.0
+text = "ITEM"
+
+[node name="BattleWindow" type="Panel" parent="."]
+offset_left = 230.0
+offset_top = 140.0
+offset_right = 410.0
+offset_bottom = 266.0
+
+[node name="BattleScene" type="Control" parent="BattleWindow"]
+offset_left = 4.0
+offset_top = 4.0
+offset_right = 176.0
+offset_bottom = 68.0
+
+[node name="Sky" type="ColorRect" parent="BattleWindow/BattleScene"]
+offset_right = 172.0
+offset_bottom = 42.0
+color = Color(0.35, 0.7, 1, 1)
+
+[node name="Ground" type="ColorRect" parent="BattleWindow/BattleScene"]
+offset_top = 42.0
+offset_right = 172.0
+offset_bottom = 64.0
+color = Color(0.28, 0.72, 0.26, 1)
+
+[node name="EnemySprite" type="TextureRect" parent="BattleWindow/BattleScene"]
+offset_left = 78.0
+offset_top = 36.0
+offset_right = 93.0
+offset_bottom = 52.0
+texture = ExtResource("2_slime")
+stretch_mode = 0
+
+[node name="AttackEffect" type="TextureRect" parent="BattleWindow/BattleScene"]
+visible = false
+offset_left = 65.0
+offset_top = 23.0
+offset_right = 107.0
+offset_bottom = 65.0
+texture = ExtResource("3_attack")
+stretch_mode = 5
+
+[node name="BattleLogWindow" type="Panel" parent="BattleWindow"]
+offset_left = 4.0
+offset_top = 72.0
+offset_right = 176.0
+offset_bottom = 122.0
+
+[node name="LogLabel" type="Label" parent="BattleWindow/BattleLogWindow"]
+offset_left = 8.0
+offset_top = 6.0
+offset_right = 164.0
+offset_bottom = 44.0
+autowrap_mode = 2

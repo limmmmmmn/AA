@@ -11,6 +11,7 @@ var hero_attack_bonus: int = 0
 var sword_collected: bool = false
 var unlocked: Dictionary = {
 	&"movement": true,
+	&"gold": true,
 }
 
 

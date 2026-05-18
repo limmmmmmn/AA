@@ -1,10 +1,11 @@
 extends Node2D
 
-const COUNTDOWN_SECONDS: float = 2.0
+const COUNTDOWN_SECONDS: float = 10.0
 const UNLOCK_TIMER_BONUS_SECONDS: float = 1.0
-const GOLD_PER_CLEAR: int = 1
+const BATTLE_VIEW_SCENE: PackedScene = preload("res://scenes/ui/battle_view.tscn")
 
 @onready var field: UnfoldField = $Field
+@onready var ui_layer: CanvasLayer = $UI
 @onready var countdown_label: Label = $UI/Countdown
 @onready var clear_screen: Control = $UI/ClearScreen
 @onready var gold_stat_label: Label = $UI/ClearScreen/ResultPanel/Layout/GoldStat
@@ -20,6 +21,7 @@ const GOLD_PER_CLEAR: int = 1
 var time_left: float = COUNTDOWN_SECONDS
 var cleared: bool = false
 var in_battle: bool = false
+var active_battle_views: Array[BattleView] = []
 
 
 func _ready() -> void:
@@ -34,7 +36,7 @@ func _ready() -> void:
 	skill_tree.node_exited_signal.connect(_on_skill_exited)
 	skill_tree.exit_requested.connect(_on_skill_tree_exit_requested)
 	field.battle_requested.connect(_on_battle_requested)
-	battle_view.battle_finished.connect(_on_battle_finished)
+	battle_view.battle_finished.connect(_on_battle_finished.bind(battle_view))
 	RunState.gold_changed.connect(_on_gold_changed)
 	RunState.skill_unlocked.connect(_on_skill_unlocked)
 	_refresh_gold_stat()
@@ -43,7 +45,7 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
-	if cleared or in_battle:
+	if cleared:
 		return
 	time_left = max(0.0, time_left - delta)
 	_refresh_countdown()
@@ -58,11 +60,18 @@ func _refresh_countdown() -> void:
 func _trigger_clear() -> void:
 	cleared = true
 	field.set_input_enabled(false)
+	await _close_active_battles_for_timeout()
 	countdown_label.visible = false
-	RunState.add_gold(GOLD_PER_CLEAR)
 	_refresh_gold_stat()
 	clear_screen.visible = true
 	unfold_button.grab_focus.call_deferred()
+
+
+func _close_active_battles_for_timeout() -> void:
+	var closing_views: Array[BattleView] = active_battle_views.duplicate()
+	for view in closing_views:
+		if is_instance_valid(view):
+			await view.force_timeout_escape()
 
 
 func _on_unfold_pressed() -> void:
@@ -80,20 +89,36 @@ func _on_continue_pressed() -> void:
 
 
 func _on_battle_requested(monster: Node2D) -> void:
-	if cleared or in_battle:
+	if cleared:
+		return
+	if in_battle and not RunState.is_unlocked(&"multi_battle"):
 		return
 	in_battle = true
 	var hero_pos: Vector2 = field.get_hero_global_position()
 	field.prepare_monster_for_battle(monster)
 	if not RunState.is_unlocked(&"battle_movement"):
 		field.set_input_enabled(false)
-	battle_view.start(monster, hero_pos)
+	var view: BattleView = _claim_battle_view()
+	active_battle_views.append(view)
+	view.start(monster, hero_pos)
 
 
-func _on_battle_finished(monster: Node2D, defeated: bool) -> void:
+func _claim_battle_view() -> BattleView:
+	if not battle_view.visible and not active_battle_views.has(battle_view):
+		return battle_view
+	var view: BattleView = BATTLE_VIEW_SCENE.instantiate() as BattleView
+	ui_layer.add_child(view)
+	view.battle_finished.connect(_on_battle_finished.bind(view))
+	return view
+
+
+func _on_battle_finished(monster: Node2D, defeated: bool, view: BattleView) -> void:
 	field.finish_battle(monster, defeated)
-	in_battle = false
-	if not cleared:
+	active_battle_views.erase(view)
+	if view != battle_view:
+		view.queue_free()
+	in_battle = not active_battle_views.is_empty()
+	if not cleared and not in_battle:
 		field.set_input_enabled(true)
 
 

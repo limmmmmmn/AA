@@ -8,6 +8,9 @@ const MIN_MOVE_SECONDS: float = 1.0
 const MAX_MOVE_SECONDS: float = 2.2
 const MIN_IDLE_SECONDS: float = 0.45
 const MAX_IDLE_SECONDS: float = 1.35
+const QUESTION_OFFSET: Vector2 = Vector2(-10, -25)
+
+@export var enemy_data: EnemyData
 
 var _rng: RandomNumberGenerator = RandomNumberGenerator.new()
 var _home: Vector2
@@ -16,12 +19,14 @@ var _bounds: Rect2
 var _has_bounds: bool = false
 var _is_idle: bool = true
 var _state_time_left: float = 0.0
+var _question_label: Label
 
 
 func _ready() -> void:
 	_rng.randomize()
 	_home = position
 	_target = position
+	_build_question_label()
 	_begin_idle()
 
 
@@ -30,6 +35,39 @@ func setup_wander(bounds: Rect2) -> void:
 	_has_bounds = true
 	_home = position
 	_target = position
+
+
+func push_from(source_position: Vector2, distance: float, bounds: Rect2) -> void:
+	var dir: Vector2 = position - source_position
+	if dir == Vector2.ZERO:
+		dir = Vector2.RIGHT
+	position += dir.normalized() * distance
+	position = Vector2(
+		clampf(position.x, bounds.position.x, bounds.end.x),
+		clampf(position.y, bounds.position.y, bounds.end.y)
+	)
+	_home = position
+	_target = position
+	_is_idle = true
+	_state_time_left = maxf(_state_time_left, 0.18)
+	set_question_visible(true)
+
+
+func set_question_visible(is_visible: bool) -> void:
+	if _question_label != null:
+		_question_label.visible = is_visible
+
+
+func gold_reward() -> int:
+	if enemy_data == null:
+		return 1
+	return maxi(0, enemy_data.gold_reward)
+
+
+func max_hp() -> int:
+	if enemy_data == null:
+		return 1
+	return maxi(1, enemy_data.max_hp)
 
 
 func _process(delta: float) -> void:
@@ -62,3 +100,19 @@ func _begin_move() -> void:
 			clampf(_target.x, _bounds.position.x, _bounds.end.x),
 			clampf(_target.y, _bounds.position.y, _bounds.end.y)
 		)
+
+
+func _build_question_label() -> void:
+	_question_label = Label.new()
+	_question_label.name = "QuestionBubble"
+	_question_label.position = QUESTION_OFFSET
+	_question_label.size = Vector2(20, 12)
+	_question_label.text = "[?]"
+	_question_label.visible = false
+	_question_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_question_label.add_theme_color_override(&"font_color", Color.WHITE)
+	_question_label.add_theme_color_override(&"font_shadow_color", Color.BLACK)
+	_question_label.add_theme_constant_override(&"shadow_offset_x", 1)
+	_question_label.add_theme_constant_override(&"shadow_offset_y", 1)
+	_question_label.add_theme_font_size_override(&"font_size", 10)
+	add_child(_question_label)

@@ -4,8 +4,8 @@
 
 [resource]
 script = ExtResource("1_data")
-grid = Vector2i(0, -4)
+grid = Vector2i(0, -2)
 skill_id = &"spawner"
-skill_name = "Spawner"
-description = "세계가 적을 다시 불러내기 시작한다. 시간이 지나면 새로운 몬스터가 나타난다."
-cost = 24
+skill_name = "Monster Spawn"
+description = "시간이 지나면 필드에 새로운 슬라임이 나타난다. 세계가 적을 다시 부르기 시작한다."
+cost = 12

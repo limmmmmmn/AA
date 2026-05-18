@@ -1,5 +1,5 @@
 class_name SwordPickup
-extends Node2D
+extends FloatingPickup
 
 const ATTACK_BONUS: int = 2
 

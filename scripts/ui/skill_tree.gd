@@ -97,7 +97,7 @@ func _load_node_definitions() -> void:
 		if not dir.current_is_dir() and file_name.ends_with(".tres"):
 			var path: String = "%s/%s" % [NODE_DATA_DIR, file_name]
 			var data: SkillNodeData = ResourceLoader.load(path) as SkillNodeData
-			if data != null:
+			if data != null and not data.hidden:
 				_defined_nodes[data.grid] = data
 		file_name = dir.get_next()
 	dir.list_dir_end()
@@ -114,6 +114,8 @@ func _expand_around(grid: Vector2i, animate: bool = false) -> void:
 	for dir in DIRS:
 		var target: Vector2i = grid + dir * dist
 		if abs(target.x) + abs(target.y) == 1:
+			continue
+		if not _defined_nodes.has(target):
 			continue
 		var node: SkillNode = _spawn_node(target)
 		_add_edge(target, grid, animate)

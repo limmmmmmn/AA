@@ -1,0 +1,13 @@
+[gd_resource type="Resource" script_class="EnemyData" load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/enemy_data.gd" id="1_enemy_data"]
+[ext_resource type="Texture2D" path="res://assets/sprites/enemies/slime.png" id="2_sprite"]
+
+[resource]
+script = ExtResource("1_enemy_data")
+id = &"slime"
+display_name = "Slime"
+sprite = ExtResource("2_sprite")
+max_hp = 1
+attack = 1
+gold_reward = 1

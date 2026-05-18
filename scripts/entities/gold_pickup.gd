@@ -1,5 +1,5 @@
 class_name GoldPickup
-extends Node2D
+extends FloatingPickup
 
 const VALUE: int = 1
 

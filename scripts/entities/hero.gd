@@ -4,6 +4,7 @@ extends Node2D
 enum Direction { LEFT, RIGHT, DOWN, UP }
 
 @onready var sprite: Sprite2D = $Sprite
+@onready var body_area: Area2D = $BodyArea
 
 const FRAME_LEFT: int = 0
 const FRAME_FRONT: int = 1
@@ -40,3 +41,12 @@ func set_moving(_is_moving: bool) -> void:
 
 func step_once() -> void:
 	pass
+
+
+func overlapping_body_targets() -> Array[Node2D]:
+	var targets: Array[Node2D] = []
+	for area in body_area.get_overlapping_areas():
+		var target: Node = area.get_parent()
+		if target is Node2D:
+			targets.append(target as Node2D)
+	return targets

@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://b7nrxiwtgacg5"
-path="res://.godot/imported/hero.svg-8fd59497eb0658c54977635bc3c17726.ctex"
+uid="uid://cx6tobgy7orwl"
+path="res://.godot/imported/sword_1.png-6262109af831de5196f40f84943ce5d1.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/sprites/characters/hero.svg"
-dest_files=["res://.godot/imported/hero.svg-8fd59497eb0658c54977635bc3c17726.ctex"]
+source_file="res://assets/sprites/icons/sword_1.png"
+dest_files=["res://.godot/imported/sword_1.png-6262109af831de5196f40f84943ce5d1.ctex"]
 
 [params]
 
@@ -38,6 +38,3 @@ process/hdr_as_srgb=false
 process/hdr_clamp_exposure=false
 process/size_limit=0
 detect_3d/compress_to=1
-svg/scale=1.0
-editor/scale_with_editor_scale=false
-editor/convert_colors_with_editor_theme=false

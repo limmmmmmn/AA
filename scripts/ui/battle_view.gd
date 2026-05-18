@@ -14,7 +14,17 @@ const MESSAGE_SECONDS: float = 0.72
 const AUTO_BATTLE_DELAY: float = 0.35
 const FIELD_BATTLE_GAP: float = 16.0
 const ATTACK_EFFECT_SIZE: Vector2 = Vector2(42, 42)
-const SLIME_MAX_HP: int = 6
+const FALLBACK_SLIME_MAX_HP: int = 1
+const HERO_MAX_HP: int = 10
+const SLIME_ATTACK_DAMAGE: int = 1
+const STATS_WINDOW_POS: Vector2 = Vector2(182, 70)
+const STATS_WINDOW_SIZE: Vector2 = Vector2(92, 66)
+const COMMAND_WINDOW_POS: Vector2 = Vector2(278, 70)
+const COMMAND_WINDOW_SIZE: Vector2 = Vector2(180, 66)
+const BATTLE_WINDOW_POS: Vector2 = Vector2(230, 140)
+const BATTLE_WINDOW_SIZE: Vector2 = Vector2(180, 126)
+const BATTLE_SCENE_RECT: Rect2 = Rect2(4, 4, 172, 64)
+const BATTLE_LOG_RECT: Rect2 = Rect2(4, 72, 172, 50)
 
 var _monster: Node2D
 var _busy: bool = false
@@ -22,13 +32,15 @@ var _field_mode: bool = false
 var _world_anchor: Vector2 = Vector2.ZERO
 var _battle_side: int = 1
 var _battle_window_home: Vector2 = Vector2.ZERO
-var _slime_hp: int = SLIME_MAX_HP
+var _slime_hp: int = FALLBACK_SLIME_MAX_HP
+var _hero_hp: int = HERO_MAX_HP
+var _ending: bool = false
+var _finished: bool = false
 
 var _command_buttons: Array[Button] = []
 var _stats_window: Panel
 var _command_window: Panel
 var _battle_window: Panel
-var _log_window: Panel
 var _fight_button: Button
 var _spell_button: Button
 var _run_button: Button
@@ -44,17 +56,23 @@ func _ready() -> void:
 	visible = false
 	focus_mode = Control.FOCUS_NONE
 	mouse_filter = Control.MOUSE_FILTER_STOP
-	_build_ui()
+	if has_node("BattleWindow"):
+		_bind_ui()
+	else:
+		_build_ui()
 	RunState.hero_attack_changed.connect(_on_hero_attack_changed)
 
 
 func start(monster: Node2D, hero_global_position: Vector2 = Vector2.ZERO) -> void:
 	_monster = monster
 	_busy = false
+	_ending = false
+	_finished = false
 	_field_mode = RunState.is_unlocked(&"battle_movement")
 	_world_anchor = monster.global_position if is_instance_valid(monster) else Vector2.ZERO
 	_battle_side = 1 if _world_anchor.x >= hero_global_position.x else -1
-	_slime_hp = SLIME_MAX_HP
+	_slime_hp = _monster_max_hp(monster)
+	_hero_hp = HERO_MAX_HP
 	visible = true
 	_gold_label.text = "G  %d" % RunState.gold
 	_refresh_stats()
@@ -102,34 +120,71 @@ func _unhandled_input(event: InputEvent) -> void:
 			_mark_input_handled()
 
 
+func _bind_ui() -> void:
+	_stats_window = $StatsWindow as Panel
+	_command_window = $CommandWindow as Panel
+	_battle_window = $BattleWindow as Panel
+	_battle_window_home = _battle_window.position
+	_stats_label = $StatsWindow/StatsLabel as Label
+	_gold_label = $StatsWindow/GoldLabel as Label
+	_fight_button = $CommandWindow/FightButton as Button
+	_spell_button = $CommandWindow/SpellButton as Button
+	_run_button = $CommandWindow/RunButton as Button
+	_item_button = $CommandWindow/ItemButton as Button
+	_enemy_sprite = $BattleWindow/BattleScene/EnemySprite as TextureRect
+	_attack_effect = $BattleWindow/BattleScene/AttackEffect as TextureRect
+	_log_label = $BattleWindow/BattleLogWindow/LogLabel as Label
+
+	var log_panel: Panel = $BattleWindow/BattleLogWindow as Panel
+	for panel in [_stats_window, _command_window, _battle_window, log_panel]:
+		(panel as Panel).add_theme_stylebox_override(&"panel", _make_style(PANEL_COLOR))
+		(panel as Panel).mouse_filter = Control.MOUSE_FILTER_STOP
+	_style_bound_label($StatsWindow/NameLabel as Label, 11)
+	_style_bound_label(_stats_label, 10)
+	_style_bound_label(_gold_label, 10)
+	_style_bound_label($CommandWindow/TitleLabel as Label, 11)
+	_style_bound_label(_log_label, 12)
+	for button in [_fight_button, _spell_button, _run_button, _item_button]:
+		_style_bound_button(button as Button)
+
+	_enemy_sprite.texture = SLIME_TEXTURE
+	_enemy_sprite.stretch_mode = TextureRect.STRETCH_KEEP
+	_enemy_sprite.size = SLIME_TEXTURE.get_size()
+	_enemy_sprite.pivot_offset = _enemy_sprite.size * 0.5
+	_attack_effect.texture = BASIC_ATTACK_TEXTURE
+	_attack_effect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_attack_effect.size = ATTACK_EFFECT_SIZE
+	_attack_effect.pivot_offset = ATTACK_EFFECT_SIZE * 0.5
+	_attack_effect.visible = false
+	_attack_effect.modulate = Color(1, 1, 1, 0)
+
+	_command_buttons = [_fight_button, _spell_button, _run_button, _item_button]
+	_wire_command_buttons()
+	_refresh_stats()
+
+
 func _build_ui() -> void:
-	_stats_window = _make_panel(Vector2(170, 62), Vector2(116, 74))
+	_stats_window = _make_panel(STATS_WINDOW_POS, STATS_WINDOW_SIZE)
 	_stats_window.name = "StatsWindow"
 	add_child(_stats_window)
 	_build_stats(_stats_window)
 
-	_command_window = _make_panel(Vector2(286, 62), Vector2(184, 74))
+	_command_window = _make_panel(COMMAND_WINDOW_POS, COMMAND_WINDOW_SIZE)
 	_command_window.name = "CommandWindow"
 	add_child(_command_window)
 	_build_commands(_command_window)
 
-	_battle_window = _make_panel(Vector2(226, 136), Vector2(188, 100))
+	_battle_window = _make_panel(BATTLE_WINDOW_POS, BATTLE_WINDOW_SIZE)
 	_battle_window_home = _battle_window.position
 	_battle_window.name = "BattleWindow"
 	add_child(_battle_window)
 	_build_battle_window(_battle_window)
-
-	_log_window = _make_panel(Vector2(170, 236), Vector2(300, 70))
-	_log_window.name = "BattleLogWindow"
-	add_child(_log_window)
-	_build_log(_log_window)
 
 
 func _apply_visibility_mode() -> void:
 	_field_mode = RunState.is_unlocked(&"battle_movement")
 	_stats_window.visible = not _field_mode
 	_command_window.visible = not _field_mode
-	_log_window.visible = not _field_mode
 	_battle_window.visible = true
 	if _field_mode:
 		_update_field_battle_position()
@@ -162,15 +217,32 @@ func _make_style(color: Color) -> StyleBoxFlat:
 	return style
 
 
+func _style_bound_label(label: Label, font_size: int) -> void:
+	label.add_theme_color_override(&"font_color", TEXT_COLOR)
+	label.add_theme_font_size_override(&"font_size", font_size)
+
+
+func _style_bound_button(button: Button) -> void:
+	button.flat = true
+	button.focus_mode = Control.FOCUS_ALL
+	button.add_theme_color_override(&"font_color", TEXT_COLOR)
+	button.add_theme_color_override(&"font_hover_color", TEXT_COLOR)
+	button.add_theme_color_override(&"font_focus_color", TEXT_COLOR)
+	button.add_theme_font_size_override(&"font_size", 11)
+	button.add_theme_stylebox_override(&"focus", _make_style(FOCUS_COLOR))
+	button.add_theme_stylebox_override(&"hover", _make_style(FOCUS_COLOR))
+
+
 func _build_stats(parent: Panel) -> void:
-	var name_label: Label = _make_label(Vector2(8, 4), Vector2(100, 16), "Hero", 12)
+	var name_label: Label = _make_label(Vector2(8, 4), Vector2(76, 14), "Hero", 11)
 	parent.add_child(name_label)
 
-	_stats_label = _make_label(Vector2(8, 18), Vector2(54, 50), "", 11)
+	_stats_label = _make_label(Vector2(8, 18), Vector2(76, 46), "", 10)
 	parent.add_child(_stats_label)
 	_refresh_stats()
 
-	_gold_label = _make_label(Vector2(58, 52), Vector2(50, 16), "G  0", 11)
+	_gold_label = _make_label(Vector2(44, 4), Vector2(42, 14), "G  0", 10)
+	_gold_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	parent.add_child(_gold_label)
 
 
@@ -179,16 +251,20 @@ func _build_commands(parent: Panel) -> void:
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	parent.add_child(title)
 
-	_fight_button = _make_command_button("FIGHT", Vector2(10, 20))
-	_spell_button = _make_command_button("SPELL", Vector2(96, 20))
-	_run_button = _make_command_button("RUN", Vector2(10, 46))
-	_item_button = _make_command_button("ITEM", Vector2(96, 46))
+	_fight_button = _make_command_button("FIGHT", Vector2(14, 20))
+	_spell_button = _make_command_button("SPELL", Vector2(98, 20))
+	_run_button = _make_command_button("RUN", Vector2(14, 44))
+	_item_button = _make_command_button("ITEM", Vector2(98, 44))
 
 	parent.add_child(_fight_button)
 	parent.add_child(_spell_button)
 	parent.add_child(_run_button)
 	parent.add_child(_item_button)
 
+	_wire_command_buttons()
+
+
+func _wire_command_buttons() -> void:
 	_fight_button.focus_neighbor_right = _fight_button.get_path_to(_spell_button)
 	_fight_button.focus_neighbor_bottom = _fight_button.get_path_to(_run_button)
 	_spell_button.focus_neighbor_left = _spell_button.get_path_to(_fight_button)
@@ -198,45 +274,64 @@ func _build_commands(parent: Panel) -> void:
 	_item_button.focus_neighbor_top = _item_button.get_path_to(_spell_button)
 	_item_button.focus_neighbor_left = _item_button.get_path_to(_run_button)
 
-	_fight_button.pressed.connect(_on_fight_pressed)
-	_spell_button.pressed.connect(_on_spell_pressed)
-	_run_button.pressed.connect(_on_run_pressed)
-	_item_button.pressed.connect(_on_item_pressed)
+	if not _fight_button.pressed.is_connected(_on_fight_pressed):
+		_fight_button.pressed.connect(_on_fight_pressed)
+	if not _spell_button.pressed.is_connected(_on_spell_pressed):
+		_spell_button.pressed.connect(_on_spell_pressed)
+	if not _run_button.pressed.is_connected(_on_run_pressed):
+		_run_button.pressed.connect(_on_run_pressed)
+	if not _item_button.pressed.is_connected(_on_item_pressed):
+		_item_button.pressed.connect(_on_item_pressed)
 
 
 func _build_battle_window(parent: Panel) -> void:
+	var battle_scene: Control = Control.new()
+	battle_scene.name = "BattleScene"
+	battle_scene.position = BATTLE_SCENE_RECT.position
+	battle_scene.size = BATTLE_SCENE_RECT.size
+	parent.add_child(battle_scene)
+
 	var sky: ColorRect = ColorRect.new()
-	sky.position = Vector2(4, 4)
-	sky.size = Vector2(parent.size.x - 8, 62)
+	sky.name = "Sky"
+	sky.position = Vector2.ZERO
+	sky.size = Vector2(BATTLE_SCENE_RECT.size.x, 42)
 	sky.color = Color(0.35, 0.70, 1.0, 1)
-	parent.add_child(sky)
+	battle_scene.add_child(sky)
 
 	var ground: ColorRect = ColorRect.new()
-	ground.position = Vector2(4, 66)
-	ground.size = Vector2(parent.size.x - 8, 30)
+	ground.name = "Ground"
+	ground.position = Vector2(0, 42)
+	ground.size = Vector2(BATTLE_SCENE_RECT.size.x, 22)
 	ground.color = Color(0.28, 0.72, 0.26, 1)
-	parent.add_child(ground)
+	battle_scene.add_child(ground)
 
 	_enemy_sprite = TextureRect.new()
+	_enemy_sprite.name = "EnemySprite"
 	_enemy_sprite.texture = SLIME_TEXTURE
-	_enemy_sprite.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	_enemy_sprite.size = Vector2(42, 42)
-	_enemy_sprite.position = Vector2((parent.size.x - _enemy_sprite.size.x) * 0.5, 46)
+	_enemy_sprite.stretch_mode = TextureRect.STRETCH_KEEP
+	_enemy_sprite.size = SLIME_TEXTURE.get_size()
+	_enemy_sprite.position = Vector2((BATTLE_SCENE_RECT.size.x - _enemy_sprite.size.x) * 0.5, 36)
 	_enemy_sprite.pivot_offset = _enemy_sprite.size * 0.5
-	parent.add_child(_enemy_sprite)
+	battle_scene.add_child(_enemy_sprite)
 
 	_attack_effect = TextureRect.new()
+	_attack_effect.name = "AttackEffect"
 	_attack_effect.texture = BASIC_ATTACK_TEXTURE
 	_attack_effect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	_attack_effect.size = ATTACK_EFFECT_SIZE
 	_attack_effect.pivot_offset = ATTACK_EFFECT_SIZE * 0.5
 	_attack_effect.visible = false
 	_attack_effect.modulate = Color(1, 1, 1, 0)
-	parent.add_child(_attack_effect)
+	battle_scene.add_child(_attack_effect)
+
+	var log_panel: Panel = _make_panel(BATTLE_LOG_RECT.position, BATTLE_LOG_RECT.size)
+	log_panel.name = "BattleLogWindow"
+	parent.add_child(log_panel)
+	_build_log(log_panel)
 
 
 func _build_log(parent: Panel) -> void:
-	_log_label = _make_label(Vector2(10, 8), Vector2(parent.size.x - 20, parent.size.y - 16), "", 13)
+	_log_label = _make_label(Vector2(8, 6), Vector2(parent.size.x - 16, parent.size.y - 12), "", 12)
 	_log_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_log_label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
 	parent.add_child(_log_label)
@@ -255,7 +350,7 @@ func _make_label(pos: Vector2, label_size: Vector2, text: String, font_size: int
 func _make_command_button(text: String, pos: Vector2) -> Button:
 	var button: Button = Button.new()
 	button.position = pos
-	button.size = Vector2(78, 20)
+	button.size = Vector2(68, 18)
 	button.text = text
 	button.flat = true
 	button.focus_mode = Control.FOCUS_ALL
@@ -270,54 +365,86 @@ func _make_command_button(text: String, pos: Vector2) -> Button:
 
 
 func _on_fight_pressed(auto_triggered: bool = false) -> void:
-	if _busy:
+	if _busy or _ending:
 		return
 	_busy = true
 	_set_commands_enabled(false)
 	await _perform_hero_attack(auto_triggered)
+	if _ending:
+		return
 	if _slime_hp <= 0:
 		await _show_message("슬라임을 쓰러뜨렸다!")
 		_play_enemy_defeat()
 		await _finish_battle(true)
 		return
 	await _show_message("슬라임은 아직 버티고 있다.")
+	await _perform_slime_attack()
 	_resume_commands()
 
 
 func _perform_hero_attack(auto_triggered: bool) -> void:
+	if _ending:
+		return
 	if auto_triggered:
 		await _show_message("자동 공격!")
-		await _play_auto_attack_effect()
 	else:
 		await _show_message("용사의 공격!")
+	if _ending:
+		return
+	await _play_attack_effect()
+	if _ending:
+		return
 	var damage: int = RunState.hero_attack()
 	_slime_hp = maxi(0, _slime_hp - damage)
 	await _show_message("슬라임에게 %d 데미지!" % damage)
 
 
+func _monster_max_hp(monster: Node2D) -> int:
+	if monster is SlimeMarker:
+		return (monster as SlimeMarker).max_hp()
+	return FALLBACK_SLIME_MAX_HP
+
+
+func _perform_slime_attack() -> void:
+	if _ending:
+		return
+	await _show_message("슬라임의 공격!")
+	await _play_slime_attack_effect()
+	_hero_hp = maxi(0, _hero_hp - SLIME_ATTACK_DAMAGE)
+	_refresh_stats()
+	await _show_message("용사는 %d 데미지를 받았다!" % SLIME_ATTACK_DAMAGE)
+
+
 func _start_auto_battle() -> void:
-	if not visible or _busy:
+	if not visible or _busy or _ending:
 		return
 	await get_tree().create_timer(AUTO_BATTLE_DELAY).timeout
-	if not visible or _busy:
+	if not visible or _busy or _ending:
 		return
 	await _show_message("용사는 망설임 없이 달려들었다!")
-	while visible and not _busy and _slime_hp > 0:
+	if _ending:
+		return
+	while visible and not _busy and not _ending and _slime_hp > 0:
 		_busy = true
 		_set_commands_enabled(false)
 		await _perform_hero_attack(true)
+		if _ending:
+			return
 		if _slime_hp <= 0:
 			await _show_message("슬라임을 쓰러뜨렸다!")
 			_play_enemy_defeat()
 			await _finish_battle(true)
 			return
 		await _show_message("슬라임은 아직 버티고 있다.")
+		await _perform_slime_attack()
+		if _ending:
+			return
 		_busy = false
 		await get_tree().create_timer(AUTO_BATTLE_DELAY).timeout
 
 
 func _on_spell_pressed() -> void:
-	if _busy:
+	if _busy or _ending:
 		return
 	_busy = true
 	_set_commands_enabled(false)
@@ -326,7 +453,7 @@ func _on_spell_pressed() -> void:
 
 
 func _on_item_pressed() -> void:
-	if _busy:
+	if _busy or _ending:
 		return
 	_busy = true
 	_set_commands_enabled(false)
@@ -335,7 +462,7 @@ func _on_item_pressed() -> void:
 
 
 func _on_run_pressed() -> void:
-	if _busy:
+	if _busy or _ending:
 		return
 	_busy = true
 	_set_commands_enabled(false)
@@ -407,7 +534,7 @@ func _set_log(text: String) -> void:
 
 func _refresh_stats() -> void:
 	if _stats_label != null:
-		_stats_label.text = "LV   1\nHP  10\nMP   0\nAT  %2d" % RunState.hero_attack()
+		_stats_label.text = "LV   1\nHP  %2d\nMP   0\nAT  %2d" % [_hero_hp, RunState.hero_attack()]
 
 
 func _on_hero_attack_changed(_amount: int) -> void:
@@ -419,7 +546,21 @@ func _show_message(text: String) -> void:
 	await get_tree().create_timer(MESSAGE_SECONDS).timeout
 
 
+func force_timeout_escape() -> void:
+	if not visible or _ending:
+		return
+	_ending = true
+	_busy = true
+	_set_commands_enabled(false)
+	await _show_message("슬라임이 도망갔다!")
+	await _finish_battle(false)
+
+
 func _finish_battle(defeated: bool) -> void:
+	if not visible or _finished:
+		return
+	_finished = true
+	_ending = true
 	await get_tree().create_timer(0.28).timeout
 	visible = false
 	battle_finished.emit(_monster, defeated)
@@ -439,7 +580,7 @@ func _play_enemy_defeat() -> void:
 	tween.parallel().tween_property(_enemy_sprite, "scale", Vector2(1.25, 0.65), 0.28)
 
 
-func _play_auto_attack_effect() -> void:
+func _play_attack_effect() -> void:
 	var enemy_center: Vector2 = _enemy_sprite.position + _enemy_sprite.size * 0.5
 	_attack_effect.visible = true
 	_attack_effect.position = enemy_center - ATTACK_EFFECT_SIZE * 0.5
@@ -464,6 +605,26 @@ func _play_auto_attack_effect() -> void:
 
 	await effect_tween.finished
 	_attack_effect.visible = false
+
+
+func _play_slime_attack_effect() -> void:
+	var enemy_origin: Vector2 = _enemy_sprite.position
+	var tween: Tween = _enemy_sprite.create_tween()
+	tween.tween_property(_enemy_sprite, "position", enemy_origin + Vector2(0, 12), 0.10)\
+		.set_trans(Tween.TRANS_QUAD)\
+		.set_ease(Tween.EASE_OUT)
+	tween.parallel().tween_property(_enemy_sprite, "scale", Vector2(1.12, 0.88), 0.10)\
+		.set_trans(Tween.TRANS_QUAD)\
+		.set_ease(Tween.EASE_OUT)
+	tween.parallel().tween_property(_enemy_sprite, "modulate", Color(1.0, 0.95, 0.95, 1.0), 0.08)
+	tween.tween_property(_enemy_sprite, "position", enemy_origin, 0.14)\
+		.set_trans(Tween.TRANS_BACK)\
+		.set_ease(Tween.EASE_OUT)
+	tween.parallel().tween_property(_enemy_sprite, "scale", Vector2.ONE, 0.14)\
+		.set_trans(Tween.TRANS_BACK)\
+		.set_ease(Tween.EASE_OUT)
+	tween.parallel().tween_property(_enemy_sprite, "modulate", Color.WHITE, 0.12)
+	await tween.finished
 
 
 func _mark_input_handled() -> void:

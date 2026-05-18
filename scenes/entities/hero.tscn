@@ -1,7 +1,11 @@
-[gd_scene load_steps=3 format=3]
+[gd_scene load_steps=4 format=3]
 
 [ext_resource type="Script" path="res://scripts/entities/hero.gd" id="1_hero"]
 [ext_resource type="Texture2D" path="res://assets/sprites/characters/hero_1.png" id="2_texture"]
+
+[sub_resource type="CapsuleShape2D" id="CapsuleShape2D_body"]
+radius = 5.0
+height = 16.0
 
 [node name="Hero" type="Node2D"]
 script = ExtResource("1_hero")
@@ -15,3 +19,10 @@ frame = 1
 enabled = true
 position_smoothing_enabled = true
 position_smoothing_speed = 8.0
+
+[node name="BodyArea" type="Area2D" parent="."]
+collision_layer = 1
+collision_mask = 2
+
+[node name="BodyShape" type="CollisionShape2D" parent="BodyArea"]
+shape = SubResource("CapsuleShape2D_body")

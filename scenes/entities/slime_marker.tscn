@@ -1,10 +1,22 @@
-[gd_scene load_steps=3 format=3]
+[gd_scene load_steps=5 format=3]
 
 [ext_resource type="Texture2D" path="res://assets/sprites/enemies/slime.png" id="1_slime"]
 [ext_resource type="Script" path="res://scripts/entities/slime_marker.gd" id="2_script"]
+[ext_resource type="Resource" path="res://data/enemies/slime.tres" id="3_data"]
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_body"]
+radius = 8.0
 
 [node name="SlimeMarker" type="Node2D"]
 script = ExtResource("2_script")
+enemy_data = ExtResource("3_data")
 
 [node name="Sprite2D" type="Sprite2D" parent="."]
 texture = ExtResource("1_slime")
+
+[node name="BodyArea" type="Area2D" parent="."]
+collision_layer = 2
+collision_mask = 0
+
+[node name="BodyShape" type="CollisionShape2D" parent="BodyArea"]
+shape = SubResource("CircleShape2D_body")

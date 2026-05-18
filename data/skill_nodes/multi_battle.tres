@@ -1,0 +1,11 @@
+[gd_resource type="Resource" script_class="SkillNodeData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/skill_node_data.gd" id="1_data"]
+
+[resource]
+script = ExtResource("1_data")
+grid = Vector2i(0, 4)
+skill_id = &"multi_battle"
+skill_name = "Multi Battle"
+description = "전투 중 마주친 적도 따로 전투창을 연다. 필드는 작은 소동들로 동시에 바빠진다."
+cost = 192

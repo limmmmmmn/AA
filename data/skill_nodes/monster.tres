@@ -9,3 +9,4 @@ skill_id = &"monster"
 skill_name = "Monster"
 description = "움직이는 적의 형상이 세계에 나타난다."
 cost = 12
+hidden = true
