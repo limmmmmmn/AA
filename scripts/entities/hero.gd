@@ -14,6 +14,7 @@ var direction: Direction = Direction.DOWN
 
 
 func _ready() -> void:
+	add_to_group(&"party")
 	face(Direction.DOWN)
 
 
@@ -50,3 +51,14 @@ func overlapping_body_targets() -> Array[Node2D]:
 		if target is Node2D:
 			targets.append(target as Node2D)
 	return targets
+
+
+func overlapping_pickups() -> Array[Node2D]:
+	var pickups: Array[Node2D] = []
+	for area in body_area.get_overlapping_areas():
+		if area.name != &"PickupArea":
+			continue
+		var target: Node = area.get_parent()
+		if target is Node2D:
+			pickups.append(target as Node2D)
+	return pickups

@@ -82,54 +82,43 @@ offset_bottom = 62.0
 text = "ITEM"
 
 [node name="BattleWindow" type="Panel" parent="."]
-offset_left = 230.0
-offset_top = 140.0
-offset_right = 410.0
-offset_bottom = 266.0
+offset_left = 260.0
+offset_top = 150.0
+offset_right = 390.0
+offset_bottom = 234.0
 
 [node name="BattleScene" type="Control" parent="BattleWindow"]
 offset_left = 4.0
 offset_top = 4.0
-offset_right = 176.0
-offset_bottom = 68.0
-
-[node name="Sky" type="ColorRect" parent="BattleWindow/BattleScene"]
-offset_right = 172.0
-offset_bottom = 42.0
-color = Color(0.35, 0.7, 1, 1)
-
-[node name="Ground" type="ColorRect" parent="BattleWindow/BattleScene"]
-offset_top = 42.0
-offset_right = 172.0
-offset_bottom = 64.0
-color = Color(0.28, 0.72, 0.26, 1)
+offset_right = 126.0
+offset_bottom = 48.0
 
 [node name="EnemySprite" type="TextureRect" parent="BattleWindow/BattleScene"]
-offset_left = 78.0
-offset_top = 36.0
-offset_right = 93.0
-offset_bottom = 52.0
+offset_left = 53.0
+offset_top = 25.0
+offset_right = 68.0
+offset_bottom = 41.0
 texture = ExtResource("2_slime")
 stretch_mode = 0
 
 [node name="AttackEffect" type="TextureRect" parent="BattleWindow/BattleScene"]
 visible = false
-offset_left = 65.0
-offset_top = 23.0
-offset_right = 107.0
-offset_bottom = 65.0
+offset_left = 46.0
+offset_top = 15.0
+offset_right = 76.0
+offset_bottom = 45.0
 texture = ExtResource("3_attack")
 stretch_mode = 5
 
 [node name="BattleLogWindow" type="Panel" parent="BattleWindow"]
 offset_left = 4.0
-offset_top = 72.0
-offset_right = 176.0
-offset_bottom = 122.0
+offset_top = 52.0
+offset_right = 126.0
+offset_bottom = 80.0
 
 [node name="LogLabel" type="Label" parent="BattleWindow/BattleLogWindow"]
-offset_left = 8.0
-offset_top = 6.0
-offset_right = 164.0
-offset_bottom = 44.0
+offset_left = 4.0
+offset_top = 4.0
+offset_right = 118.0
+offset_bottom = 24.0
 autowrap_mode = 2

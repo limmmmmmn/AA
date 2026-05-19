@@ -1,0 +1,11 @@
+[gd_resource type="Resource" script_class="SkillNodeData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/skill_node_data.gd" id="1_data"]
+
+[resource]
+script = ExtResource("1_data")
+grid = Vector2i(3, 1)
+skill_id = &"shop_merchant"
+skill_name = "Shop Merchant"
+description = "상인 길드의 단골이 된다. 판매가에 추가로 2배 곱셈이 붙는다."
+cost = 200

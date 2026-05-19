@@ -1,0 +1,11 @@
+[gd_resource type="Resource" script_class="SkillNodeData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/skill_node_data.gd" id="1_data"]
+
+[resource]
+script = ExtResource("1_data")
+grid = Vector2i(1, -5)
+skill_id = &"spawner_burst"
+skill_name = "Spawner Burst"
+description = "한 번에 두 마리씩 솟아난다. 들판이 폭발한다."
+cost = 400

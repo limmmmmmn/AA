@@ -21,6 +21,7 @@ var _facing: Facing = Facing.UP
 
 
 func _ready() -> void:
+	add_to_group(&"party")
 	_apply_sprite()
 	_apply_facing()
 

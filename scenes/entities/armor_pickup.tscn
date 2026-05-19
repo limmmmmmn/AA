@@ -1,7 +1,10 @@
 [gd_scene load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://scripts/entities/armor_pickup.gd" id="1_script"]
-[ext_resource type="Texture2D" path="res://assets/sprites/icons/sword_1.png" id="2_placeholder"]
+[ext_resource type="Texture2D" path="res://assets/sprites/icons/armor.png" id="2_armor"]
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_pickup"]
+radius = 10.0
 
 [node name="ArmorPickup" type="Node2D"]
 script = ExtResource("1_script")
@@ -15,5 +18,11 @@ color = Color(0, 0, 0, 0.22)
 polygon = PackedVector2Array(-8, -2, 8, -2, 10, 0, 8, 2, -8, 2, -10, 0)
 
 [node name="Sprite2D" type="Sprite2D" parent="Visual"]
-modulate = Color(0.72, 0.82, 1.0, 1)
-texture = ExtResource("2_placeholder")
+texture = ExtResource("2_armor")
+
+[node name="PickupArea" type="Area2D" parent="."]
+collision_layer = 4
+collision_mask = 0
+
+[node name="PickupShape" type="CollisionShape2D" parent="PickupArea"]
+shape = SubResource("CircleShape2D_pickup")

@@ -1,0 +1,11 @@
+[gd_resource type="Resource" script_class="SkillNodeData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/skill_node_data.gd" id="1_data"]
+
+[resource]
+script = ExtResource("1_data")
+grid = Vector2i(-3, -3)
+skill_id = &"drop_epic"
+skill_name = "Epic Drops"
+description = "Rare 위로 Epic이 한 번 더 격상될 가능성이 생긴다. (30%)"
+cost = 1200

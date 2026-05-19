@@ -1,0 +1,11 @@
+[gd_resource type="Resource" script_class="SkillNodeData" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/data/skill_node_data.gd" id="1_data"]
+
+[resource]
+script = ExtResource("1_data")
+grid = Vector2i(0, -7)
+skill_id = &"max_enemies_2"
+skill_name = "Max Enemies II"
+description = "들판이 더 큰 무리를 품는다. 동시에 머물 수 있는 슬라임이 여덟 마리에서 열여섯 마리로 늘어난다."
+cost = 600
