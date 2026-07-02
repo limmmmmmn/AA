@@ -1,7 +1,0 @@
-[gd_resource type="Theme" format=3 uid="uid://btown2theme01"]
-
-[ext_resource type="FontFile" uid="uid://c5dvkeaebvgd7" path="res://assets/fonts/pretendard/public/static/Pretendard-Medium.otf" id="1_font"]
-
-[resource]
-default_font = ExtResource("1_font")
-default_font_size = 10

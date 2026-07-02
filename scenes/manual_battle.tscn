@@ -1,6 +1,0 @@
-[gd_scene load_steps=2 format=3]
-
-[ext_resource type="Script" path="res://scripts/runtime/manual_battle.gd" id="1_manual"]
-
-[node name="ManualBattle" type="CanvasLayer"]
-script = ExtResource("1_manual")
