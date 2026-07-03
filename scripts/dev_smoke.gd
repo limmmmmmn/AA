@@ -1,5 +1,5 @@
 extends Node
-## 개발용 스모크 테스트 — AAA_SMOKE=1 환경변수로 실행 시에만 동작. (v2.0 룸 구조)
+## 개발용 스모크 테스트 — AAA_SMOKE=1 환경변수로 실행 시에만 동작. (v3.0 한 화면 + 주민)
 
 var main: Node2D
 
@@ -14,27 +14,47 @@ func _run() -> void:
 		await _shots()
 		return
 	await get_tree().create_timer(1.2).timeout
-	print("[SMOKE] 시작 — 룸: ", main.current_room)
+	print("[SMOKE] 시작 — 주민 %d명" % Game.resident_count())
 
-	# 1) 재건 계획도 구매
+	# 0) 공개 스케줄 — 촌장 대화로 설명창, 첫 골드로 카운터, 골드 50으로 부탁 개방
+	assert(not Game.ui_unlocked["desc"])
+	main._bump_chief()
+	assert(Game.ui_unlocked["desc"])
 	Game.add_gold(100000)
-	assert(main.tree_ui.buy_node("win_cap"))
-	assert(main.tree_ui.buy_node("win_cap"))
-	print("[SMOKE] 계획도 OK — 전투창 상한 ", Game.max_windows())
-	assert(Game.max_windows() >= 3)
+	assert(Game.ui_unlocked["gold"])
+	main._bump_chief()
+	assert(Game.ui_unlocked["quest"])
+	main.hud.close_menu()
+	print("[SMOKE] 공개 스케줄 OK")
 
-	# 2) 필드 출격
-	main.goto_room(0)
-	await get_tree().create_timer(1.2).timeout
-	assert(main.current_room == 0)
+	# 1) 촌장 커맨드 — 분산 업그레이드 (지불 포함)
+	main.hud.open_chief()
+	main.hud._buy_up("win_cap", int(100 * pow(2.2, Game.up["win_cap"])), "chief")
+	main.hud._buy_up("win_cap", int(100 * pow(2.2, Game.up["win_cap"])), "chief")
+	main.hud.close_menu()
+	assert(Game.max_windows() >= 3)
+	print("[SMOKE] 촌장 커맨드 OK — 창 %d" % Game.max_windows())
+
+	# 2) 주민 영입 — 부탁(퀘스트) 자동 + 골드 지불
+	Game.kill_counts["slime"] = 5   # "슬라임 5마리" 부탁 충족
+	await get_tree().create_timer(4.0).timeout
+	print("[dbg] res=", Game.residents, " inn=", Game.buildings["inn"], " quest=", Game.ui_unlocked["quest"], " kills=", Game.kill_counts)
+	assert(Game.residents.get("innkeep", false) and Game.buildings["inn"])
+	Game.add_exp(3000)  # 레벨 게이트 통과용 (Lv 7+)
+	assert(main.try_pay_resident("smithy"))
+	await get_tree().create_timer(3.0).timeout
+	assert(Game.buildings["smith"])
+	assert(main.try_pay_resident("merchant"))
+	await get_tree().create_timer(4.0).timeout
+	assert(Game.resident_count() == 3)
+	print("[SMOKE] 주민 3명 영입 OK — 부흥 단계 %d" % main._revival_stage())
+
+	# 3) 전투 + 황금 슬라임 (한 화면 — 필드는 오른쪽에 그대로 있다)
 	var mons: Array = []
 	for m in get_tree().get_nodes_in_group("monster"):
 		if not m.is_boss:
 			mons.append(m)
-	print("[SMOKE] 초원 진입 OK — 몬스터 %d마리" % mons.size())
 	assert(mons.size() >= 5)
-
-	# 3) 전투 + 황금 슬라임
 	main._bump_monster(mons[0])
 	main._bump_monster(mons[1])
 	await get_tree().create_timer(1.0).timeout
@@ -42,12 +62,11 @@ func _run() -> void:
 	var w = main.windows[0]
 	w.sim.spawn_golden(10.0)
 	await get_tree().create_timer(0.3).timeout
-	var gold_before: int = Game.gold
 	for i in 40:
 		w.sim.rub_golden(0.04)
-	print("[SMOKE] 전투/황금 OK — %d → %d G" % [gold_before, Game.gold])
+	print("[SMOKE] 전투/황금 OK — gold=%d" % Game.gold)
 
-	# 4) 수배서 3장 → 지배자 각성 → 처치
+	# 4) 수배서 → 결계 해제 → 지배자 처치 → 열쇠/이정표/다음 필드
 	Game.posters_f[0] = 3
 	main.on_posters_complete(0)
 	await get_tree().create_timer(0.5).timeout
@@ -59,35 +78,65 @@ func _run() -> void:
 			bw.sim._apply_enemy_damage(0, 99999999, false, true)
 	await get_tree().create_timer(4.0).timeout
 	assert(Game.bosses_defeated[0])
-	print("[SMOKE] 지배자 처치 OK — 훈장: ", Game.medals_owned)
-
-	# 5) 소문(이중 열쇠) → 숲 해금
-	await get_tree().create_timer(1.5).timeout
-	assert(Game.tree_revealed.get("field1", false))
-	assert(main.tree_ui.buy_node("field1"))
+	assert(Game.keys["thief"])
+	assert(Game.signpost_seen)
 	assert(Game.fields_unlocked[1])
-	print("[SMOKE] 숲 해금 OK")
+	print("[SMOKE] 지배자 처치 OK — 열쇠/이정표/숲 해금")
 
-	# 6) 귀향 수확
-	main.pending_gold = 123
-	main.goto_room(-1)
-	await get_tree().create_timer(1.2).timeout
-	assert(main.current_room == -1 and main.pending_gold == 0)
-	print("[SMOKE] 귀향 수확 OK")
+	# 5) 잠긴 창고 (열쇠 문법) — 도둑의 열쇠로 연다
+	var wh: Interactable = null
+	for n in get_tree().get_nodes_in_group("hoverable"):
+		if n is Interactable and n.kind == "warehouse":
+			wh = n
+	assert(wh != null)
+	main._bump_warehouse(wh)
+	assert(Game.opened["warehouse"] and Game.medals_small >= 2)
+	print("[SMOKE] 창고 개방 OK — 메달 %d" % Game.medals_small)
 
-	# 7) 건물 (대장간) — 걸어 들어와 건설
-	assert(main.tree_ui.buy_node("smith"))
-	await get_tree().create_timer(3.2).timeout
-	assert(Game.buildings["smith"])
-	print("[SMOKE] 대장간 건설 OK")
+	# 6) 작은 메달 → 메달왕 자동 합류 → 교환
+	Game.medals_small = 5
+	await get_tree().create_timer(4.0).timeout
+	assert(Game.residents.get("medalist", false))
+	main.hud._medal_trade("cracked_pot", 3)
+	assert(Game.medals_owned.has("cracked_pot"))
+	print("[SMOKE] 메달왕 OK — 남은 메달 %d" % Game.medals_small)
 
-	# 8) 영입 + 대장간 판정
+	# 7) 필드 스왑 (이정표 — 우⅔만 교체)
+	main.swap_field(1)
+	await get_tree().create_timer(1.0).timeout
+	assert(main.last_field == 1)
+	main.swap_field(0)
+	await get_tree().create_timer(1.0).timeout
+	print("[SMOKE] 필드 스왑 OK")
+
+	# 8) 분산 업그레이드 — 촌장/여관/상점 커맨드가 각자 _buy_up으로 산다
+	Game.add_gold(50000)
+	main.hud.open_chief()
+	main.hud._buy_up("speed", 25, "chief")
+	assert(Game.up["speed"] == 1)
+	main.hud.open_inn()
+	main.hud._buy_up("max_hp", 30, "inn")     # 여관 침구 개선
+	assert(Game.up["max_hp"] == 1)
+	main.hud.open_shop_menu()
+	main.hud._buy_up("gold_mult", 60, "shop") # 상점 골드 감각 — 예전에 여기서 터졌다
+	assert(Game.up["gold_mult"] == 1)
+	main.hud.close_menu()
+	print("[SMOKE] 분산 업글 OK — speed/max_hp/gold_mult")
+
+	# 8.5) 여관 회복 + 대장간 판정
 	if not Game.has_member("warrior"):
 		Game.recruit("warrior")
+	Game.damage_member(0, 5)
+	main.hud.open_inn()
+	main.hud._inn_rest()
+	assert(Game.members[0]["hp"] == Game.members[0]["max_hp"])
 	main.hud._apply_forge(1, 3)
-	print("[SMOKE] 강화 OK — 무기 +%d, 필살작 %d" % [Game.members[1]["weapon_lv"], Game.smith_perfects])
+	print("[SMOKE] 여관/대장간 OK — 무기 +%d" % Game.members[1]["weapon_lv"])
 
-	# 9) 카지노/서사시/훈장
+	# 9) 도박사 영입 → 카지노 + 서사시
+	assert(main.try_pay_resident("gambler"))
+	await get_tree().create_timer(3.0).timeout
+	assert(Game.buildings["casino"])
 	Game.coins += 600
 	main.hud.open_casino()
 	main.hud._casino_spin()
@@ -98,26 +147,16 @@ func _run() -> void:
 	while not Game.epic_complete():
 		Game.add_gold(20000)
 		Game.buy_verse()
-	assert(Game.members[0]["weapon_lv"] == 6)
-	Game.toggle_medal("coward_flag")
-	print("[SMOKE] 카지노/서사시/훈장 OK — ", Game.weapon_name(0))
-	Game.toggle_medal("coward_flag")
+	print("[SMOKE] 카지노/서사시 OK — %s" % Game.weapon_name(0))
 
-	# 10) 수배 게시판 탭
-	main.hud.open_board(1)
-	main.hud.close_menu()
-
-	# 11) 전멸 → 기지 부활
-	main.goto_room(1)
-	await get_tree().create_timer(1.2).timeout
+	# 10) 전멸 → 부활
 	for i in Game.members.size():
 		Game.damage_member(i, 99999999)
 	await get_tree().create_timer(4.0).timeout
 	assert(Game.alive_count() == Game.members.size())
-	assert(main.current_room == -1)
-	print("[SMOKE] 전멸/부활 OK — gold=", Game.gold)
+	print("[SMOKE] 전멸/부활 OK — gold=%d" % Game.gold)
 
-	# 12) 세이브/로드
+	# 11) 세이브/로드
 	Game.save_game()
 	Game.load_game()
 	print("[SMOKE] 세이브/로드 OK")
@@ -127,35 +166,37 @@ func _run() -> void:
 # ---------------------------------------------------------------- 스크린샷
 
 func _shots() -> void:
-	await get_tree().create_timer(1.2).timeout
-	await _save_shot("shot_base.png")
-	# 필드 + 전투창 도배 (반응형 축소 확인)
+	await get_tree().create_timer(1.5).timeout
+	await _save_shot("shot_start.png")   # 시작: 용사·촌장·항아리·잠긴 것들뿐
+	# 공개 스케줄 진행 + 주민 셋
+	main._bump_chief()
 	Game.add_gold(50000)
-	Game.up["win_cap"] = 7
-	main.goto_room(0)
-	await get_tree().create_timer(1.2).timeout
-	for i in 6:
-		main._open_battle([main._field_def(0, 0, 300.0), main._field_def(0, 0, 300.0)], false)
-	await get_tree().create_timer(2.0).timeout
+	main._bump_chief()
+	main.hud.close_menu()
+	Game.kill_counts["slime"] = 5
+	Game.add_exp(3000)
+	await get_tree().create_timer(4.5).timeout
+	main.try_pay_resident("smithy")
+	await get_tree().create_timer(3.0).timeout
+	main.try_pay_resident("merchant")
+	await get_tree().create_timer(4.5).timeout
+	# 전투창 도배
+	Game.up["win_cap"] = 5
+	var mons: Array = []
+	for m in get_tree().get_nodes_in_group("monster"):
+		if not m.is_boss:
+			mons.append(m)
+	for i in mini(4, mons.size()):
+		main._bump_monster(mons[i])
+	await get_tree().create_timer(2.5).timeout
 	if main.windows.size() > 0:
 		main.windows[0].sim.spawn_golden(20.0)
 	await get_tree().create_timer(1.0).timeout
-	await _save_shot("shot_field.png")
-	# 재건 계획도
-	main.tree_ui.open()
+	await _save_shot("shot_village3.png")  # 한 화면: 마을⅓ + 필드⅔ + 창
+	# 촌장 커맨드 메뉴
+	main.hud.open_chief()
 	await get_tree().create_timer(0.4).timeout
-	await _save_shot("shot_tree.png")
-	main.tree_ui.close()
-	# 성문 메뉴
-	main.goto_room(-1)
-	await get_tree().create_timer(1.2).timeout
-	main.hud.open_gate()
-	await get_tree().create_timer(0.4).timeout
-	await _save_shot("shot_gate.png")
-	# 수배 게시판
-	main.hud.open_board()
-	await get_tree().create_timer(0.3).timeout
-	await _save_shot("shot_board.png")
+	await _save_shot("shot_chief.png")
 	main.hud.close_menu()
 	print("[SHOT] 완료")
 	get_tree().quit()

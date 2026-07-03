@@ -7,16 +7,7 @@ const SLOT_POS := [
 	Vector2(4, 22), Vector2(158, 22), Vector2(312, 22), Vector2(466, 22),
 	Vector2(4, 110), Vector2(158, 110), Vector2(312, 110), Vector2(466, 110),
 ]
-const GOLD_TARGET := Vector2(36, 10)
-
-const DOCK_ITEMS := [
-	{"id": "tree",   "label": "계획도"},
-	{"id": "board",  "label": "수배"},
-	{"id": "smith",  "label": "대장간"},
-	{"id": "casino", "label": "카지노"},
-	{"id": "bard",   "label": "서사시"},
-	{"id": "medals", "label": "훈장"},
-]
+const GOLD_TARGET := Vector2(40, 16)
 
 const IDLE_LINES := [
 	"바람이 분다. 평화롭다. …일단은.",
@@ -26,6 +17,7 @@ const IDLE_LINES := [
 	"돌아갈 곳이 있다는 건 좋은 일이다.",
 	"몬스터에게 부딪히면 전투창이 열린다.",
 	"전투창을 지켜보면 일행이 힘을 낸다.",
+	"마을에 서 있는 사람 수가 곧 진행바다.",
 ]
 
 var main: Node2D
@@ -40,10 +32,12 @@ var _desc_label: Label
 var _member_boxes: Array = []
 var _casino_refs: Dictionary = {}
 var _spin_active := false
-var _dock_btns: Dictionary = {}   # id → Button
-var _dock_t := 0.0
 var _board_tab := 0
 var room_name := "기지"           # main이 설정
+var _bubble: PanelContainer
+var _bubble_label: Label
+var _top_panel: PanelContainer
+var _desc_panel: PanelContainer
 
 var _hover_text := ""
 var _event_text := ""
@@ -64,6 +58,11 @@ func _ready() -> void:
 	Game.upgrades_changed.connect(func(): _update_top())
 	_update_top()
 	_rebuild_members()
+	# 세이브에서 이미 태어난 UI는 연출 없이 바로 보여준다 (탄생은 최초 1회뿐)
+	if Game.ui_unlocked["desc"]:
+		_desc_panel.visible = true
+	if Game.ui_unlocked["gold"]:
+		_top_panel.visible = true
 
 func _build() -> void:
 	windows_root = Control.new()
@@ -71,34 +70,35 @@ func _build() -> void:
 	windows_root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(windows_root)
 
-	# 상단 바
-	var top := UILib.make_panel()
-	top.position = Vector2(4, 2)
-	add_child(top)
+	# 상단 정보창 — 첫 골드를 벌면 태어난다 (8px 그리드)
+	_top_panel = UILib.make_panel()
+	_top_panel.position = Vector2(8, 8)
+	_top_panel.visible = false
+	add_child(_top_panel)
 	_top_label = UILib.make_label("", UILib.FS, UILib.COL_GOLD)
-	top.add_child(_top_label)
+	_top_panel.add_child(_top_label)
 
-	# 마을 도크 — 시선 활동의 신호등 (오른쪽 세로)
-	for i in DOCK_ITEMS.size():
-		var item: Dictionary = DOCK_ITEMS[i]
-		var b := UILib.make_button(item["label"], UILib.FS)
-		b.position = Vector2(586, 176 + i * 20)
-		b.size = Vector2(50, 18)
-		b.visible = false
-		var id: String = item["id"]
-		b.pressed.connect(func(): _dock_pressed(id))
-		add_child(b)
-		_dock_btns[id] = b
+	# 말풍선 (호버한 캐릭터 머리 위)
+	_bubble = UILib.make_panel()
+	_bubble.visible = false
+	_bubble.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_bubble)
+	_bubble_label = UILib.make_label("", UILib.FS)
+	_bubble_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_bubble_label.custom_minimum_size = Vector2(0, 0)
+	_bubble_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_bubble.add_child(_bubble_label)
 
-	# 상시 설명창 (하단 왼쪽)
-	var desc := UILib.make_panel()
-	desc.position = Vector2(4, 318)
-	desc.custom_minimum_size = Vector2(196, 38)
-	add_child(desc)
+	# 상시 설명창 — 촌장에게 말을 걸면 태어난다 (베이스라인 y=352, 높이 40)
+	_desc_panel = UILib.make_panel()
+	_desc_panel.position = Vector2(8, 312)
+	_desc_panel.custom_minimum_size = Vector2(240, 40)
+	_desc_panel.visible = false
+	add_child(_desc_panel)
 	_desc_label = UILib.make_label("", UILib.FS)
 	_desc_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_desc_label.custom_minimum_size = Vector2(184, 28)
-	desc.add_child(_desc_label)
+	_desc_label.custom_minimum_size = Vector2(224, 26)
+	_desc_panel.add_child(_desc_label)
 
 	_fx_root = Control.new()
 	_fx_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -127,66 +127,76 @@ func _process(delta: float) -> void:
 			_idle_t = 9.0
 			_idle_i = (_idle_i + 1) % IDLE_LINES.size()
 		_desc_label.text = IDLE_LINES[_idle_i]
-	# 도크 점등
-	_dock_t += delta
-	if fmod(_dock_t, 0.25) < delta:
-		_update_dock()
 
-# ---------------------------------------------------------------- 마을 도크
+# ---------------------------------------------------------------- UI 공개 스케줄 (게임이 자라는 게임)
 
-func _dock_pressed(id: String) -> void:
-	if id == "tree":
-		if main != null:
-			main.tree_ui.toggle()
+func unlock_ui(id: String) -> void:
+	if Game.ui_unlocked.get(id, false):
 		return
-	if id == "smith":
-		if main != null and main.smith_ready():
-			open_smith()
-		else:
-			Sfx.play("deny")
-			event("화덕이 아직 식어 있다…")
-		return
-	if _menu_kind == id:
-		close_menu()
-		return
+	Game.ui_unlocked[id] = true
+	Sfx.play("window", 1.2)
+	var target: Control = null
 	match id:
-		"board": open_board()
-		"casino": open_casino()
-		"bard": open_bard()
-		"medals": open_medals()
+		"desc":
+			target = _desc_panel
+		"gold":
+			target = _top_panel
+			_update_top()
+		"party":
+			_rebuild_members()
+			for b in _member_boxes:
+				if is_instance_valid(b["panel"]):
+					_birth_pop(b["panel"])
+		"quest":
+			pass  # 촌장의 부탁이 열린다 — UI가 아니라 세계(촌장)가 창구
+	if target != null:
+		target.visible = true
+		_birth_pop(target)
+	Game.save_game()
 
-func _update_dock() -> void:
-	var vis := {
-		"tree": true,
-		"board": Game.buildings["board"],
-		"smith": Game.buildings["smith"],
-		"casino": Game.buildings["casino"],
-		"bard": Game.buildings["bard"],
-		"medals": Game.medals_owned.size() > 0,
-	}
-	var lit := {
-		"tree": RebuildTree.any_affordable(),
-		"board": _board_affordable(),
-		"smith": main != null and main.smith_ready(),
-		"casino": Game.coins >= 200,
-		"bard": not Game.epic_complete() and Game.epic_verses < Game.EPIC_COSTS.size() and Game.gold >= Game.EPIC_COSTS[Game.epic_verses],
-		"medals": false,
-	}
-	var pulse := 0.75 + 0.25 * sin(_dock_t * 6.0)
-	for id in _dock_btns.keys():
-		var b: Button = _dock_btns[id]
-		b.visible = vis.get(id, false)
-		if lit.get(id, false):
-			b.modulate = Color(pulse + 0.3, pulse + 0.2, 0.5)
-		else:
-			b.modulate = Color(1, 1, 1)
+func _birth_pop(c: Control) -> void:
+	# UI의 탄생 — 뿅
+	c.pivot_offset = c.size / 2.0
+	c.scale = Vector2(0.2, 0.2)
+	var tw := create_tween()
+	tw.tween_property(c, "scale", Vector2.ONE, 0.3).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
-func _board_affordable() -> bool:
-	for f in 4:
-		if Game.fields_unlocked[f] and Game.posters_f[f] < 3 \
-				and Game.gold >= Game.poster_cost(f, Game.posters_f[f]):
-			return true
-	return false
+var _toasts: Array = []
+
+func toast(text: String, dur: float = 3.0) -> void:
+	# 설명창이 태어나기 전의 대사는 화면 중앙에 — 여러 개면 아래로 쌓인다
+	var l := UILib.make_label(text, UILib.FS, UILib.COL_WHITE)
+	l.add_theme_color_override("font_outline_color", Color(0, 0, 0))
+	l.add_theme_constant_override("outline_size", 3)
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_fx_root.add_child(l)
+	_toasts.append(l)
+	await get_tree().process_frame
+	if not is_instance_valid(l):
+		return
+	var idx: int = maxi(0, _toasts.find(l))
+	l.position = Vector2(320 - l.size.x / 2.0, 140 + idx * 14)
+	var tw := create_tween()
+	tw.tween_interval(dur)
+	tw.tween_property(l, "modulate:a", 0.0, 0.6)
+	tw.tween_callback(func():
+		_toasts.erase(l)
+		l.queue_free())
+
+# ---------------------------------------------------------------- 말풍선
+
+func show_bubble(text: String, screen_pos: Vector2) -> void:
+	_bubble_label.text = text
+	_bubble_label.custom_minimum_size = Vector2(minf(150.0, text.length() * UILib.FS + 8.0), 0)
+	_bubble.visible = true
+	_bubble.reset_size()
+	var p := screen_pos - Vector2(_bubble.size.x / 2.0, _bubble.size.y)
+	p.x = clampf(p.x, 2.0, 640.0 - _bubble.size.x - 2.0)
+	p.y = clampf(p.y, 2.0, 360.0 - _bubble.size.y - 2.0)
+	_bubble.position = p
+
+func hide_bubble() -> void:
+	_bubble.visible = false
 
 # ---------------------------------------------------------------- 상단/설명
 
@@ -202,6 +212,9 @@ func set_hover(text: String) -> void:
 	_hover_text = text
 
 func event(text: String, dur: float = 2.5) -> void:
+	if not Game.ui_unlocked["desc"]:
+		toast(text, dur)  # 설명창이 태어나기 전엔 중앙에
+		return
 	_event_text = text
 	_event_t = dur
 
@@ -212,10 +225,14 @@ func _rebuild_members() -> void:
 		if is_instance_valid(b["panel"]):
 			b["panel"].queue_free()
 	_member_boxes = []
-	for i in Game.members.size():
+	if not Game.ui_unlocked["party"]:
+		return
+	var n := Game.members.size()
+	for i in n:
 		var p := UILib.make_panel()
-		p.position = Vector2(204 + i * 76, 318)
-		p.custom_minimum_size = Vector2(74, 38)
+		# 오른쪽에서부터 채우고, 새 동료가 오면 한 칸씩 자란다 (베이스라인 y=352)
+		p.position = Vector2(632 - 74 - (n - 1 - i) * 82, 312)
+		p.custom_minimum_size = Vector2(74, 40)
 		add_child(p)
 		var v := VBoxContainer.new()
 		v.add_theme_constant_override("separation", 1)
@@ -254,8 +271,8 @@ func _update_member(i: int) -> void:
 
 func member_box_center(i: int) -> Vector2:
 	if i < _member_boxes.size() and is_instance_valid(_member_boxes[i]["panel"]):
-		return _member_boxes[i]["panel"].position + Vector2(37, 19)
-	return Vector2(320, 330)
+		return _member_boxes[i]["panel"].position + Vector2(37, 20)
+	return Vector2(500, 332)
 
 # ---------------------------------------------------------------- 연출 (fx)
 
@@ -394,6 +411,187 @@ func _menu_row(v: VBoxContainer, left: String, sub: String, btn_text: String, en
 
 # ---------------------------------------------------------------- 성문 (필드 선택)
 
+# ---------------------------------------------------------------- 커맨드 메뉴 (해금 문법 ① — 각 건물이 자기 영역을 판다)
+
+func open_chief() -> void:
+	_menu_kind = "chief"
+	var v := _menu_panel("촌장 — 마을의 모든 일")
+	# 부탁 — 주민 영입 후보 2~3명 동시 노출 (어느 부탁부터가 곧 선택)
+	v.add_child(UILib.make_label("— 부탁 (사람을 모으자) —", UILib.FS, UILib.COL_GOLD))
+	var cands: Array = main.candidate_residents()
+	if cands.is_empty():
+		v.add_child(UILib.make_label("모두 모였다. 마을은 완성됐다.", UILib.FS, UILib.COL_GRAY))
+	for r in cands:
+		var c: Dictionary = r["cond"]
+		var cond_txt: String = main.resident_cond_text(r)
+		if c.has("gold"):
+			var lv_ok: bool = not c.has("lv") or Game.level >= int(c["lv"])
+			_menu_row(v, String(r["name"]), String(r["ask"]), cond_txt,
+				lv_ok and Game.gold >= int(c["gold"]),
+				func(): _chief_pay(r["id"]))
+		else:
+			_menu_row(v, String(r["name"]), String(r["ask"]), cond_txt, false, func(): pass)
+	# 건설 — 게시판·항아리 (의식과 살림)
+	v.add_child(UILib.make_label("— 건설 —", UILib.FS, UILib.COL_GOLD))
+	if not Game.buildings["board"]:
+		var bc := int(60 * pow(2.0, 0))
+		_menu_row(v, "수배 게시판", "위험한 놈들을 불러들인다 (레벨 게이트: Lv 2)", "%d G" % bc,
+			Game.level >= 2 and Game.gold >= bc, func(): _chief_build_board(bc))
+	if Game.extra_pots < 3:
+		var pc := int(30 * pow(2.2, Game.extra_pots))
+		_menu_row(v, "항아리 확충 %d/3" % Game.extra_pots, "광장에 항아리 +2", "%d G" % pc,
+			Game.gold >= pc, func(): _chief_add_pots(pc))
+	# 전선 확대 / 원정 (분산 수치 업그레이드 — 촌장 담당분)
+	v.add_child(UILib.make_label("— 전선 확대 —", UILib.FS, UILib.COL_GOLD))
+	_up_row(v, "win_cap", "전투창 확장", "동시 전투창 +1", 100, 2.2, 5, 2 + Game.up["win_cap"] * 2)
+	_up_row(v, "battle_speed", "전투 가속", "전투 턴 간격 -7%", 25, 1.22, 12, 0)
+	_up_row(v, "density", "무리 유인", "창당 최대 적 수 +1", 120, 2.0, 4, 4)
+	v.add_child(UILib.make_label("— 원정 —", UILib.FS, UILib.COL_GOLD))
+	_up_row(v, "speed", "이속 강화", "파티 이동 속도 +8%", 25, 1.2, 9, 0)
+	_up_row(v, "shovel", "삽", "반짝이는 땅을 판다", 150, 1.0, 1, 0)
+	_up_row(v, "intuition", "용사의 직감", "파티가 스스로 사냥하고 돌아온다", 800, 1.0, 1, 5)
+	if Game.up["intuition"] > 0:
+		_up_row(v, "radius", "행동반경", "직감 사냥 반경 +80", 200, 2.0, 3, 0)
+
+func _up_row(v: VBoxContainer, id: String, name_txt: String, desc: String, base: int, growth: float, max_lv: int, lv_gate: int) -> void:
+	var lv: int = Game.up[id]
+	var maxed: bool = lv >= max_lv
+	var cost := int(base * pow(growth, lv))
+	var label := name_txt + (" Lv%d" % lv if max_lv > 1 else "")
+	var gated: bool = Game.level < lv_gate
+	var btn := "완료" if maxed else ("Lv%d 필요" % lv_gate if gated else "%d G" % cost)
+	# 어느 메뉴에서 불렸든 그 메뉴를 다시 연다 (촌장/여관/상점 공용)
+	var reopen := _menu_kind
+	_menu_row(v, label, desc, btn, not maxed and not gated and Game.gold >= cost,
+		func(): _buy_up(id, cost, reopen))
+
+func _buy_up(id: String, cost: int, reopen: String) -> void:
+	if not Game.try_spend(cost):
+		Sfx.play("deny")
+		return
+	Sfx.play("buy")
+	main.up_effect(id)
+	match reopen:
+		"inn": open_inn()
+		"shop": open_shop_menu()
+		_: open_chief()
+
+func _chief_pay(id: String) -> void:
+	if main.try_pay_resident(id):
+		close_menu()
+	else:
+		open_chief()
+
+func _chief_build_board(cost: int) -> void:
+	if not Game.try_spend(cost):
+		Sfx.play("deny")
+		return
+	Sfx.play("buy")
+	main.build_board()
+	close_menu()
+
+func _chief_add_pots(cost: int) -> void:
+	if not Game.try_spend(cost):
+		Sfx.play("deny")
+		return
+	Sfx.play("buy")
+	main.add_pots()
+	open_chief()
+
+func open_inn() -> void:
+	_menu_kind = "inn"
+	var v := _menu_panel("여관 — \"어서 오세요\"")
+	var need: bool = Game.lowest_hp_ratio() < 1.0 or Game.ghost_count() > 0
+	_menu_row(v, "쉬어간다", "일행의 HP를 전부 회복한다", "무료", need, _inn_rest)
+	_up_row(v, "max_hp", "침구 개선", "전원 최대 HP +6", 30, 1.2, 9, 0)
+
+func _inn_rest() -> void:
+	Sfx.play("heal")
+	Game.heal_all_full()
+	if Game.ghost_count() > 0:
+		event("…늦잠은 금물. (유령은 교회에서)", 3.0)
+	else:
+		event("…늦잠은 금물.", 2.5)
+	close_menu()
+
+func open_church() -> void:
+	_menu_kind = "church"
+	var v := _menu_panel("교회 — 경건한 기운")
+	var ghosts := Game.ghost_count()
+	var cost := Game.revive_cost()
+	_menu_row(v, "유령을 되살린다 (%d명)" % ghosts, "빛이 일행을 감싸안는다", "%d G" % cost if ghosts > 0 else "—",
+		ghosts > 0 and Game.gold >= cost, _church_revive)
+	_menu_row(v, "모험의 서에 기록한다", "다음 회차로 — 훈장·서사시는 남는다",
+		"기록" if Game.bosses_defeated[4] or Game.ending_seen else "마왕 처치 후",
+		Game.bosses_defeated[4] or Game.ending_seen,
+		func(): main._do_prestige())
+
+func _church_revive() -> void:
+	var cost := Game.revive_cost()
+	if not Game.try_spend(cost):
+		Sfx.play("deny")
+		return
+	Sfx.play("revive")
+	Game.revive_all()
+	event("빛이 일행을 감싸안았다. 되살아났다!", 3.0)
+	close_menu()
+
+func open_shop_menu() -> void:
+	_menu_kind = "shop"
+	var v := _menu_panel("상점 — \"좋은 물건 있습니다\"")
+	_up_row(v, "gold_mult", "골드 감각", "골드 획득 +15%", 60, 1.25, 9, 0)
+	v.add_child(UILib.make_label("— 조수 동물 —", UILib.FS, UILib.COL_GOLD))
+	_assist_row(v, "monkey", "원숭이", "마을 항아리를 자동으로 깬다", 600, 2.5, 3)
+	_assist_row(v, "keeper", "상자지기", "보물상자를 자동으로 연다", 900, 1.0, 1)
+	_assist_row(v, "pig", "꽃돼지", "필드의 반짝이를 자동으로 판다", 1200, 2.2, 3)
+
+func _assist_row(v: VBoxContainer, id: String, name_txt: String, desc: String, base: int, growth: float, max_n: int) -> void:
+	var n: int = Game.assistants[id]
+	var maxed: bool = n >= max_n
+	var cost := int(base * pow(growth, n))
+	_menu_row(v, "%s %d/%d" % [name_txt, n, max_n], desc, "완료" if maxed else "%d G" % cost,
+		not maxed and Game.gold >= cost, func(): _buy_assist(id, cost))
+
+func _buy_assist(id: String, cost: int) -> void:
+	if not Game.try_spend(cost):
+		Sfx.play("deny")
+		return
+	Sfx.play("buy")
+	Game.assistants[id] += 1
+	main.spawn_assistant(id)
+	event("새 조수가 마을에 도착했다!")
+	Game.save_game()
+	open_shop_menu()
+
+func open_medalking() -> void:
+	_menu_kind = "medalking"
+	var v := _menu_panel("메달왕 — \"오오, 메달의 향기!\"")
+	v.add_child(UILib.make_label("보유: 작은 메달 %d개" % Game.medals_small, UILib.FS, UILib.COL_GOLD))
+	_medal_trade_row(v, "cracked_pot", 3)
+	_medal_trade_row(v, "metal_crown", 8)
+	_menu_row(v, "훈장을 단다", "모은 훈장을 장착/해제한다", "열기", Game.medals_owned.size() > 0,
+		func(): open_medals())
+
+func _medal_trade_row(v: VBoxContainer, id: String, cost: int) -> void:
+	var d: Dictionary = Game.MEDAL_DEFS[id]
+	if Game.medals_owned.has(id):
+		_menu_row(v, "훈장: " + d["name"], d["desc"], "교환 완료", false, func(): pass)
+	else:
+		_menu_row(v, "훈장: " + d["name"], d["desc"], "메달 %d개" % cost,
+			Game.medals_small >= cost, func(): _medal_trade(id, cost))
+
+func _medal_trade(id: String, cost: int) -> void:
+	if Game.medals_small < cost:
+		Sfx.play("deny")
+		return
+	Game.medals_small -= cost
+	Game.medals_spent += cost
+	Game.own_medal(id)
+	Sfx.play("fanfare_big")
+	event("메달왕: 「훌륭한 메달이다! 옜다, 「%s」!」" % Game.MEDAL_DEFS[id]["name"], 4.0)
+	Game.save_game()
+	open_medalking()
+
 func open_gate() -> void:
 	_menu_kind = "gate"
 	var v := _menu_panel("성문 — 어디로 출격할까")
@@ -418,7 +616,9 @@ func open_gate() -> void:
 func _depart(i: int) -> void:
 	close_menu()
 	if main != null:
-		main.goto_room(i)
+		main.select_field(i)
+		Sfx.play("click")
+		event("이정표가 %s 쪽을 가리킨다. 동쪽으로!" % Game.FIELD_NAMES[i], 3.0)
 
 # ---------------------------------------------------------------- 대장간
 
@@ -596,7 +796,6 @@ func open_casino() -> void:
 	else:
 		_menu_row(v, "전투창 상한 +1", "", "교환 완료", false, func(): pass)
 	_casino_medal_row(v, "mimic_teeth", 300)
-	_casino_medal_row(v, "metal_crown", 300)
 	_casino_medal_row(v, "slime_incense", 200)
 
 func _casino_medal_row(v: VBoxContainer, id: String, cost: int) -> void:

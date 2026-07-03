@@ -46,17 +46,27 @@ func _ready() -> void:
 	_bob_t = randf() * TAU
 	_wait = randf_range(0.5, 3.0)
 
+func _draw() -> void:
+	# 지배자의 결계 — 평소에도 "언젠가 깰 저것"이 시야에 있다 (v3.0 §B-4)
+	if is_boss and asleep:
+		var a := 0.35 + 0.15 * sin(_bob_t * 0.7)
+		draw_arc(Vector2(0, -10), 22.0, 0, TAU, 24, Color(0.7, 0.4, 0.95, a), 1.5)
+		draw_arc(Vector2(0, -10), 26.0, 0, TAU, 6, Color(0.7, 0.4, 0.95, a * 0.5), 1.0)
+
 func _process(delta: float) -> void:
 	bump_cd = maxf(0.0, bump_cd - delta)
 	_bob_t += delta * 5.0
 	_sprite.position.y = 0.0 if asleep else -absf(sin(_bob_t)) * 2.0
 	if is_boss:
+		if asleep:
+			queue_redraw()  # 결계 일렁임
 		return  # 보스는 자리를 지킨다
 	_wait -= delta
 	if _wait <= 0.0:
 		_wait = randf_range(1.5, 4.5)
 		_move_target = _anchor + Vector2(randf_range(-34, 34), randf_range(-34, 34))
-		_move_target = _move_target.clamp(Vector2(24, 34), Vector2(616, 330))
+		# 몬스터는 필드(우⅔)에서만 어슬렁 — 마을(좌⅓)은 침범 금지
+		_move_target = _move_target.clamp(Vector2(236, 40), Vector2(620, 320))
 	var d := _move_target - position
 	if d.length() > 2.0:
 		position += d.normalized() * 12.0 * delta

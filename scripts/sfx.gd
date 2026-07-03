@@ -159,6 +159,8 @@ func _build_all() -> void:
 	_streams["boss"] = _to_stream(_melody([[131.0, 0.25], [0.0, 0.06], [123.0, 0.5]], "saw", 0.5))
 	# 클릭 (깃발)
 	_streams["click"] = _to_stream(_tone(660.0, 0.04, 0.25, "square"))
+	# 타자기 블립 (전투 로그 한 글자)
+	_streams["blip"] = _to_stream(_tone(1100.0, 0.018, 0.18, "square"))
 	# 상자
 	_streams["chest"] = _to_stream(_concat([_tone(392.0, 0.07, 0.35, "square"), _tone(494.0, 0.07, 0.35, "square"), _tone(587.0, 0.12, 0.35, "square")]))
 	# 팔레트 전환 (세계가 물든다)

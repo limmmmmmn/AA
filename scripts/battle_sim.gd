@@ -34,6 +34,7 @@ func setup(defs: Array, boss: bool) -> void:
 		var d: Dictionary = defs[i]
 		enemies.append({
 			"name": d["name"],
+			"mid": d.get("id", ""),
 			"letter": (LETTERS[i] if defs.size() > 1 else ""),
 			"hp": int(d["hp"]), "max_hp": int(d["hp"]),
 			"atk": int(d["atk"]), "gold": int(d["gold"]), "exp": int(d["exp"]),
@@ -179,7 +180,7 @@ func _apply_enemy_damage(i: int, dmg: int, crit: bool, log_line: bool) -> void:
 	if dead:
 		line.emit("%s을(를)" % display_name(e))
 		line.emit("쓰러뜨렸다!")
-		Game.kills += 1
+		Game.add_kill(String(e.get("mid", e.get("name", ""))))
 	enemy_hit.emit(i, dmg, crit, dead)
 
 func _enemy_act(i: int) -> void:

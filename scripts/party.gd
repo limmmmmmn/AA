@@ -7,13 +7,14 @@ signal bumped(node: Node2D)
 
 const SPACING := 5          # 히스토리 점 몇 개 간격으로 따라올까 (점 간격 3px)
 const HISTORY_STEP := 3.0
-const ROOM_MIN := Vector2(10, 26)
-const ROOM_MAX := Vector2(630, 348)
 
 var frozen := false
-var ai_query: Callable      # main이 제공 — 용사의 직감 (직감 없으면 null 반환)
+var ai_query: Callable        # main이 제공 — 용사의 직감 (직감 없으면 null 반환)
+var bounds_min := Vector2(10, 26)
+var bounds_max := Vector2(630, 348)
 var head_pos := Vector2.ZERO
 var target_node: Node2D = null
+var target_point: Variant = null   # AI용 지점 이동 (Vector2)
 var manual_hold := 0.0      # 수동 입력 직후엔 자율 행동 억제
 var _ai_wait := 0.0
 
@@ -38,6 +39,7 @@ func init_at(pos: Vector2) -> void:
 func teleport(pos: Vector2) -> void:
 	init_at(pos)
 	target_node = null
+	target_point = null
 	_layout_sprites()
 
 func _rebuild_sprites() -> void:
@@ -74,6 +76,7 @@ func _physics_process(delta: float) -> void:
 		- (1.0 if Input.is_physical_key_pressed(KEY_W) or Input.is_physical_key_pressed(KEY_UP) else 0.0))
 	if kdir != Vector2.ZERO:
 		target_node = null
+		target_point = null
 		manual_hold = 2.5
 		_step(kdir.normalized(), delta)
 		_check_passive_bumps()
@@ -81,7 +84,7 @@ func _physics_process(delta: float) -> void:
 		return
 
 	# 용사의 직감 — 자율 행동
-	if target_node == null and manual_hold <= 0.0:
+	if target_node == null and target_point == null and manual_hold <= 0.0:
 		_ai_wait -= delta
 		if _ai_wait <= 0.0:
 			_ai_wait = 1.2
@@ -89,13 +92,15 @@ func _physics_process(delta: float) -> void:
 				var t = ai_query.call()
 				if t is Node2D:
 					target_node = t
+				elif t is Vector2:
+					target_point = t
 
 	_moving = false
 	if target_node != null:
 		if not is_instance_valid(target_node):
 			target_node = null
 		else:
-			var d: Vector2 = target_node.position - head_pos
+			var d: Vector2 = target_node.global_position - head_pos
 			var arrive: float = target_node.pick_radius() if target_node.has_method("pick_radius") else 14.0
 			if d.length() <= arrive:
 				var n := target_node
@@ -103,13 +108,19 @@ func _physics_process(delta: float) -> void:
 				bumped.emit(n)
 			else:
 				_step(d.normalized(), delta)
+	elif target_point != null:
+		var dp: Vector2 = (target_point as Vector2) - head_pos
+		if dp.length() <= 6.0:
+			target_point = null
+		else:
+			_step(dp.normalized(), delta)
 
 	_check_passive_bumps()
 	_layout_sprites()
 
 func _step(dir: Vector2, delta: float) -> void:
 	head_pos += dir * Game.move_speed() * delta
-	head_pos = head_pos.clamp(ROOM_MIN, ROOM_MAX)
+	head_pos = head_pos.clamp(bounds_min, bounds_max)
 	_moving = true
 	_dir_row = _dir_from(dir)
 	if _history.is_empty() or head_pos.distance_to(_history[0]) >= HISTORY_STEP:
@@ -127,11 +138,11 @@ func _check_passive_bumps() -> void:
 	for m in get_tree().get_nodes_in_group("monster"):
 		if not is_instance_valid(m) or not m.is_visible_in_tree():
 			continue
-		if m.bump_cd <= 0.0 and head_pos.distance_to(m.position) < (m.pick_radius() + 4.0):
+		if m.bump_cd <= 0.0 and head_pos.distance_to(m.global_position) < (m.pick_radius() + 4.0):
 			bumped.emit(m)
 			return
 	for n in get_tree().get_nodes_in_group("hoverable"):
-		if n is Interactable and n.passive_active() and n.is_visible_in_tree() and head_pos.distance_to(n.position) < n.pick_radius():
+		if n is Interactable and n.passive_active() and n.is_visible_in_tree() and head_pos.distance_to(n.global_position) < n.pick_radius():
 			bumped.emit(n)
 			return
 

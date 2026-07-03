@@ -9,8 +9,10 @@ signal chapter_changed(value: int)
 signal party_wiped
 signal upgrades_changed
 
-const SAVE_PATH := "user://appears_save.json"
 const MAX_WINDOWS_HARD := 8
+
+# 스모크 테스트는 별도 세이브를 쓴다 — 유저의 진짜 세이브를 건드리지 않도록
+var save_path := "user://appears_save.json"
 
 # ---------------------------------------------------------------- 파티
 
@@ -33,25 +35,47 @@ var exp: int = 0
 var run_count: int = 1  # 회차
 var kills: int = 0
 
-# 업그레이드 (재건 계획도)
+# 업그레이드 — 담당 건물의 커맨드 메뉴로 분산 (v3.0 §B-5. 공격력은 대장간 무기가 담당)
 var up := {
-	"speed": 0, "win_cap": 0, "battle_speed": 0, "atk": 0,
+	"speed": 0, "win_cap": 0, "battle_speed": 0,
 	"gold_mult": 0, "max_hp": 0, "density": 0,
 	"shovel": 0, "radius": 0, "intuition": 0,
 }
 
-# 진행 플래그 — v2.0 룸 구조
+# 진행 플래그 — v3.0 한 화면 월드
 var fields_unlocked: Array = [true, false, false, false, false]  # 초원/숲/동굴/설원/마왕성
 var bosses_defeated: Array = [false, false, false, false, false]
 var posters_f: Array = [0, 0, 0, 0, 0]  # 필드별 수배서 (마왕성 제외)
-var tree_revealed := {}              # 이중 열쇠 — 소문을 들은 노드 id
-var extra_pots := 0                  # 계획도 "항아리 확충"
-var buildings := {"inn": true, "board": true, "church": false, "smith": false, "chest": false, "casino": false, "bard": false}
+var extra_pots := 0
+var buildings := {"inn": false, "board": false, "church": false, "smith": false, "chest": false, "casino": false, "bard": false, "medalking": false, "shop": false}
 var recruits_spawned := {"warrior": false, "mage": false, "priest": false}
 var discovered := {}                 # 검시(도감): kind 문자열 → true
 var golden_first_done := false
 var golden_info := false             # 게시판 "황금 슬라임 목격 정보"
 var ending_seen := false
+
+# v3.0 — 주민(시설의 화신) / 열쇠 / 작은 메달 / 부탁
+var residents := {}                  # id → true (영입됨). 주민 수 = 마을의 진행바
+var kill_counts := {}                # 몬스터 id → 처치 수 (부탁 퀘스트용)
+var medals_small := 0                # 작은 메달 (골드 교환 불가 수집품)
+var medals_spent := 0                # 메달왕에게 이미 교환한 누적치
+var keys := {"thief": false, "magic": false}   # 드퀘 열쇠
+var opened := {"warehouse": false, "redchest": false}  # 잠긴 오브젝트
+var signpost_seen := false           # 이정표 등장 여부 (보스 1 처치 후)
+
+# UI 공개 스케줄 — 화면의 모든 UI는 해금 이벤트를 가진다 ("게임이 자라는 게임")
+var ui_unlocked := {"desc": false, "gold": false, "party": false, "quest": false}
+
+func resident_count() -> int:
+	var n := 0
+	for k in residents.keys():
+		if residents[k]:
+			n += 1
+	return n
+
+func add_kill(id: String) -> void:
+	kills += 1
+	kill_counts[id] = int(kill_counts.get(id, 0)) + 1
 
 # Phase 4 상태
 var coins: int = 0                   # 카지노 코인 (놀이용 칩)
@@ -69,10 +93,10 @@ const MEDAL_DEFS := {
 	"aqua_regia":    {"name": "왕수의 성수",         "desc": "받는 데미지 2배, 골드 2배",               "hint": "숲의 지배자가 지니고 있다"},
 	"ghost_warcry":  {"name": "원혼의 함성",         "desc": "유령 1명당 파티 공격력 +15%",             "hint": "동굴의 지배자가 지니고 있다"},
 	"spirit_party":  {"name": "심령 파티",           "desc": "유령도 모든 창에서 절반 위력으로 싸운다", "hint": "설원의 지배자가 지니고 있다"},
-	"sticky_gloves": {"name": "끈끈이 장갑",         "desc": "황금 슬라임 도주까지 +2초",               "hint": "보물상자에서 아주 가끔 나온다"},
-	"cracked_pot":   {"name": "금 간 항아리",        "desc": "항아리 쿨타임 절반, 보상 절반",           "hint": "보물상자에서 아주 가끔 나온다"},
+	"sticky_gloves": {"name": "끈끈이 장갑",         "desc": "황금 슬라임 도주까지 +2초",               "hint": "붉은 상자 안에 있는 것 같다"},
+	"cracked_pot":   {"name": "금 간 항아리",        "desc": "항아리 쿨타임 절반, 보상 절반",           "hint": "메달왕이 교환해 준다"},
 	"mimic_teeth":   {"name": "미믹의 이빨",         "desc": "모든 상자가 미믹, 보상 3배",              "hint": "카지노 교환소 한정"},
-	"metal_crown":   {"name": "메탈 슬라임의 왕관",  "desc": "황금 슬라임이 자주 오지만 빨리 도망간다", "hint": "카지노 교환소 한정"},
+	"metal_crown":   {"name": "메탈 슬라임의 왕관",  "desc": "황금 슬라임이 자주 오지만 빨리 도망간다", "hint": "메달왕이 교환해 준다"},
 	"slime_incense": {"name": "슬라임 유인향",       "desc": "황금 슬라임이 주시 중인 창에만 나타난다", "hint": "카지노 교환소 한정"},
 	"anvil_bless":   {"name": "모루의 축복",         "desc": "대장간 실패 없음, 대신 +3도 없음",        "hint": "회심의 필살작을 3번 쳐내면…"},
 }
@@ -198,7 +222,7 @@ func has_member(cls: String) -> bool:
 func member_atk(idx: int) -> int:
 	var m: Dictionary = members[idx]
 	var base: int = CLASS_DEFS[m["cls"]]["atk"]
-	var atk := float(base + m["weapon_lv"] * 2 + up["atk"] * 2 + int(level / 2.0))
+	var atk := float(base + m["weapon_lv"] * 2 + int(level / 2.0))
 	if medal_on("ghost_warcry"):
 		atk *= 1.0 + 0.15 * ghost_count()
 	return int(atk)
@@ -405,14 +429,20 @@ func do_prestige() -> void:
 	fields_unlocked = [true, false, false, false, false]
 	bosses_defeated = [false, false, false, false, false]
 	posters_f = [0, 0, 0, 0, 0]
-	tree_revealed = {}
 	extra_pots = 0
 	for k in up.keys():
 		up[k] = 0
 	for k in assistants.keys():
 		assistants[k] = 0
-	buildings = {"inn": true, "board": true, "church": false, "smith": false, "chest": false, "casino": false, "bard": false}
+	buildings = {"inn": false, "board": false, "church": false, "smith": false, "chest": false, "casino": false, "bard": false, "medalking": false, "shop": false}
 	recruits_spawned = {"warrior": false, "mage": false, "priest": false}
+	residents = {}
+	kill_counts = {}
+	medals_small = 0
+	medals_spent = 0
+	keys = {"thief": false, "magic": false}
+	opened = {"warehouse": false, "redchest": false}
+	signpost_seen = false
 	golden_first_done = false
 	golden_info = false
 	ending_seen = false
@@ -432,12 +462,12 @@ func save_game() -> void:
 	for m in members:
 		mem_save.append({"cls": m["cls"], "weapon_lv": m["weapon_lv"], "hp": m["hp"], "ghost": m["ghost"]})
 	var data := {
-		"version": 3,
+		"version": 4,
 		"gold": gold, "total_earned": total_earned,
 		"level": level, "exp": exp, "run_count": run_count, "kills": kills,
 		"up": up,
 		"fields_unlocked": fields_unlocked, "bosses_defeated": bosses_defeated,
-		"posters_f": posters_f, "tree_revealed": tree_revealed, "extra_pots": extra_pots,
+		"posters_f": posters_f, "extra_pots": extra_pots,
 		"buildings": buildings, "recruits_spawned": recruits_spawned,
 		"discovered": discovered, "golden_first_done": golden_first_done,
 		"golden_info": golden_info,
@@ -445,16 +475,20 @@ func save_game() -> void:
 		"coins": coins, "epic_verses": epic_verses, "smith_perfects": smith_perfects,
 		"casino_wincap": casino_wincap, "assistants": assistants,
 		"medals_owned": medals_owned, "medals_equipped": medals_equipped,
+		"ui_unlocked": ui_unlocked,
+		"residents": residents, "kill_counts": kill_counts,
+		"medals_small": medals_small, "medals_spent": medals_spent,
+		"keys": keys, "opened": opened, "signpost_seen": signpost_seen,
 	}
-	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
+	var f := FileAccess.open(save_path, FileAccess.WRITE)
 	if f:
 		f.store_string(JSON.stringify(data))
 		f.close()
 
 func load_game() -> void:
-	if not FileAccess.file_exists(SAVE_PATH):
+	if not FileAccess.file_exists(save_path):
 		return
-	var f := FileAccess.open(SAVE_PATH, FileAccess.READ)
+	var f := FileAccess.open(save_path, FileAccess.READ)
 	if f == null:
 		return
 	var parsed = JSON.parse_string(f.get_as_text())
@@ -462,8 +496,8 @@ func load_game() -> void:
 	if not parsed is Dictionary:
 		return
 	var d: Dictionary = parsed
-	if int(d.get("version", 1)) < 3:
-		return  # v2 이전 세이브는 구조가 달라 버린다 (프로토타입)
+	if int(d.get("version", 1)) < 4:
+		return  # v3 이전 세이브는 구조가 달라 버린다 (프로토타입)
 	gold = int(d.get("gold", 0))
 	total_earned = int(d.get("total_earned", 0))
 	level = int(d.get("level", 1))
@@ -480,9 +514,19 @@ func load_game() -> void:
 			bosses_defeated[i] = bool(bd[i])
 		if i < pf.size():
 			posters_f[i] = int(pf[i])
-	tree_revealed = d.get("tree_revealed", {})
 	extra_pots = int(d.get("extra_pots", 0))
 	golden_info = bool(d.get("golden_info", false))
+	residents = d.get("residents", {})
+	kill_counts = d.get("kill_counts", {})
+	medals_small = int(d.get("medals_small", 0))
+	medals_spent = int(d.get("medals_spent", 0))
+	var kk: Dictionary = d.get("keys", {})
+	for k in keys.keys():
+		keys[k] = bool(kk.get(k, false))
+	var op: Dictionary = d.get("opened", {})
+	for k in opened.keys():
+		opened[k] = bool(op.get(k, false))
+	signpost_seen = bool(d.get("signpost_seen", false))
 	var u: Dictionary = d.get("up", {})
 	for k in up.keys():
 		up[k] = int(u.get(k, 0))
@@ -503,6 +547,9 @@ func load_game() -> void:
 		assistants[k] = int(asst.get(k, 0))
 	medals_owned = d.get("medals_owned", [])
 	medals_equipped = d.get("medals_equipped", [])
+	var uiu: Dictionary = d.get("ui_unlocked", {})
+	for k in ui_unlocked.keys():
+		ui_unlocked[k] = bool(uiu.get(k, false))
 	var mem: Array = d.get("members", [])
 	if not mem.is_empty():
 		members = []

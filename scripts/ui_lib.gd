@@ -25,13 +25,20 @@ static func panel_style(border: Color = COL_WHITE, bg: Color = COL_BG) -> StyleB
 	s.bg_color = bg
 	s.border_color = border
 	s.set_border_width_all(2)
-	s.set_corner_radius_all(2)
-	s.set_content_margin_all(4)
+	s.set_corner_radius_all(3)
+	s.set_content_margin_all(6)
 	return s
 
 static func make_panel(border: Color = COL_WHITE) -> PanelContainer:
+	# 드퀘식 이중 테두리 — 굵은 흰 외곽(2px) + 1px 간격 + 얇은 안쪽 선
 	var p := PanelContainer.new()
 	p.add_theme_stylebox_override("panel", panel_style(border))
+	var inner := border
+	inner.a = 0.85
+	p.draw.connect(func():
+		var r := Rect2(Vector2(4, 4), p.size - Vector2(8, 8))
+		if r.size.x > 8.0 and r.size.y > 8.0:
+			p.draw_rect(r, inner, false, 1.0))
 	return p
 
 static func make_label(text: String, size: int = FS, color: Color = COL_WHITE) -> Label:
@@ -190,3 +197,130 @@ static func set_cursor(mode: String) -> void:
 	_ensure_cursors()
 	_cursor_mode = mode
 	Input.set_custom_mouse_cursor(_cursor_tex[mode], Input.CURSOR_ARROW, _cursor_hot[mode])
+
+# ---------------------------------------------------------------- 16×16 아이콘 (계획도/재건 패널용)
+
+const ASSIST_GRIDS := {
+	"monkey": [
+		".KKKKK..",
+		"KMMMMMK.",
+		"KMKMKMK.",
+		"KMMMMMK.",
+		".KMMMK.K",
+		"..KMK.KK",
+		"..K.K...",
+		"........",
+	],
+	"keeper": [
+		"KK...KK.",
+		"KSK.KSK.",
+		".KSSSK..",
+		"KSKSKSK.",
+		"KSSSSSK.",
+		".KSSSK..",
+		"..K.K...",
+		"........",
+	],
+	"pig": [
+		"........",
+		".KKKKK..",
+		"KPPPPPK.",
+		"KPKPKPK.",
+		"KPPRPPK.",
+		".KPPPK..",
+		"..K.K...",
+		"........",
+	],
+}
+
+const _ICON_GRIDS := {
+	"atk": [  # 검
+		"......KK", ".....KWK", "....KWK.", "...KWK..", "KK.WK...", "KWKK....",
+		"KKWK....", ".KK.....",
+	],
+	"battle_speed": [  # 시계
+		"..KKKK..", ".KWWWWK.", "KWWKWWWK", "KWWKWWWK", "KWWKKWWK", "KWWWWWWK",
+		".KWWWWK.", "..KKKK..",
+	],
+	"max_hp": [  # 하트
+		".KK.KK..", "KRRKRRK.", "KRRRRRK.", "KRRRRRK.", ".KRRRK..", "..KRK...",
+		"...K....", "........",
+	],
+	"win_cap": [  # 전투창
+		"KKKKKKKK", "KWWWWWWK", "KWKKKKWK", "KWKKKKWK", "KWKKKKWK", "KWWKKWWK",
+		"KWWWWWWK", "KKKKKKKK",
+	],
+	"speed": [  # 부츠
+		"..KKK...", "..KBBK..", "..KBBK..", "..KBBK..", "..KBBBK.", "..KBBBBK",
+		".KDDDDDK", ".KKKKKKK",
+	],
+	"shovel": [  # 삽
+		"...KK...", "...KK...", "...KK...", "...KK...", "..KWWK..", ".KWWWWK.",
+		".KWWWWK.", "..KKKK..",
+	],
+	"intuition": [  # 눈
+		"........", ".KKKKKK.", "KWWWWWWK", "KWKUUKWK", "KWKUUKWK", "KWWWWWWK",
+		".KKKKKK.", "........",
+	],
+	"density": [  # 무리 (점 셋)
+		"........", ".KK..KK.", "KUUKKUUK", "KUUKKUUK", ".KK.KKK.", "..KUUK..",
+		"..KUUK..", "...KK...",
+	],
+	"bard": [  # 음표
+		"....KK..", "....KWK.", "....KWK.", "....KW..", "....KW..", ".KKKKW..",
+		"KWWWKW..", ".KKK....",
+	],
+	"casino": [  # 7
+		"KKKKKKK.", "KGGGGGK.", "KKKKGGK.", "...KGGK.", "..KGGK..", ".KGGK...",
+		".KGGK...", ".KKKK...",
+	],
+	"board": [  # 게시판
+		"KKKKKKKK", "KWWKWWKK", "KWWKWWKK", "KKKKKKKK", "..K..K..", "..K..K..",
+		"..K..K..", "........",
+	],
+}
+
+static var _icon_cache := {}
+
+static func icon(id: String) -> Texture2D:
+	if _icon_cache.has(id):
+		return _icon_cache[id]
+	var tex: Texture2D = null
+	match id:
+		"gold_mult":
+			tex = load("res://assets/objects/gold.png")
+		"radius":
+			tex = load("res://assets/objects/world.png")
+		"field1":
+			tex = load("res://assets/objects/forest 2.png")
+		"field2":
+			tex = load("res://assets/objects/cave.png")
+		"field3":
+			tex = load("res://assets/objects/hill.png")
+		"field4":
+			tex = load("res://assets/objects/castle.png")
+		"smith":
+			tex = load("res://assets/objects/whetstone.png")
+		"church":
+			tex = load("res://assets/objects/shrine.png")
+		"inn":
+			tex = load("res://assets/objects/inn.png")
+		"chest":
+			var a := AtlasTexture.new()
+			a.atlas = load("res://assets/objects/chest_1.png")
+			a.region = Rect2(0, 0, 16, 18)
+			tex = a
+		"pots", "pot":
+			var a2 := AtlasTexture.new()
+			a2.atlas = load("res://assets/objects/pot.png")
+			a2.region = Rect2(0, 0, 14, 15)
+			tex = a2
+		"monkey", "keeper", "pig":
+			tex = _grid_to_tex(ASSIST_GRIDS[id], 2)
+		_:
+			if _ICON_GRIDS.has(id):
+				tex = _grid_to_tex(_ICON_GRIDS[id], 2)
+			else:
+				tex = load("res://assets/objects/gold.png")
+	_icon_cache[id] = tex
+	return tex

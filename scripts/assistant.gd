@@ -3,38 +3,6 @@ extends Node2D
 ## 조수 동물 — 마을/필드 자동화 담당 (동료 = 전투 / 조수 = 자동화, GDD §8)
 ## 스프라이트는 임시 코드 생성 (8×8) — 나중에 png 교체
 
-const GRIDS := {
-	"monkey": [
-		".KKKKK..",
-		"KMMMMMK.",
-		"KMKMKMK.",
-		"KMMMMMK.",
-		".KMMMK.K",
-		"..KMK.KK",
-		"..K.K...",
-		"........",
-	],
-	"keeper": [
-		"KK...KK.",
-		"KSK.KSK.",
-		".KSSSK..",
-		"KSKSKSK.",
-		"KSSSSSK.",
-		".KSSSK..",
-		"..K.K...",
-		"........",
-	],
-	"pig": [
-		"........",
-		".KKKKK..",
-		"KPPPPPK.",
-		"KPKPKPK.",
-		"KPPRPPK.",
-		".KPPPK..",
-		"..K.K...",
-		"........",
-	],
-}
 const NAMES := {"monkey": "원숭이", "keeper": "상자지기", "pig": "꽃돼지"}
 const FLAVORS := {
 	"monkey": "원숭이. 항아리만 보면 신이 난다.",
@@ -61,7 +29,7 @@ func setup(p_kind: String, p_main: Node2D, p_home: Vector2) -> void:
 
 func _ready() -> void:
 	_sprite = Sprite2D.new()
-	_sprite.texture = UILib._grid_to_tex(GRIDS[kind], 1)
+	_sprite.texture = UILib._grid_to_tex(UILib.ASSIST_GRIDS[kind], 1)
 	_sprite.offset = Vector2(0, -4)
 	add_child(_sprite)
 	_wander = home
@@ -71,13 +39,15 @@ func _physics_process(delta: float) -> void:
 	_cd = maxf(0.0, _cd - delta)
 	_bob += delta * 6.0
 	_sprite.position.y = -absf(sin(_bob)) * 1.5
+	if kind == "pig" and main != null and main.party != null:
+		home = main.party.head_pos  # 꽃돼지는 일행 곁을 맴돈다
 	if _target != null and not is_instance_valid(_target):
 		_target = null
 	if _target == null and _cd <= 0.0:
 		_target = _find_target()
 	var dest := _wander
 	if _target != null:
-		dest = _target.position
+		dest = _target.global_position
 	else:
 		_wait -= delta
 		if _wait <= 0.0:
@@ -102,7 +72,7 @@ func _find_target() -> Node2D:
 	var best_d := 1e9
 	for n in get_tree().get_nodes_in_group("hoverable"):
 		if n is Interactable and n.kind == want and n.is_ready:
-			var dd: float = position.distance_to(n.position)
+			var dd: float = global_position.distance_to(n.global_position)
 			if dd < best_d:
 				best_d = dd
 				best = n
