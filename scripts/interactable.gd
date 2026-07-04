@@ -35,6 +35,10 @@ func setup(p_kind: String, p_recruit_cls: String = "") -> void:
 
 func _ready() -> void:
 	match kind:
+		"cheatpot":  # DEBUG: 금색 치트 항아리
+			_make_sprite("pot", Rect2(0, 0, 14, 15))
+			_sprite.self_modulate = Color(2.2, 1.8, 0.3)
+			_sprite.scale = Vector2(1.4, 1.4)
 		"pot":
 			passive = true
 			_make_sprite("pot", Rect2(0, 0, 14, 15))
@@ -58,7 +62,7 @@ func _ready() -> void:
 			_sprite.self_modulate = Color(0.45, 0.4, 0.55)
 		"gate":
 			_make_sprite("gate", Rect2())
-		"exit", "signpost", "warehouse", "fountain":
+		"exit", "signpost", "warehouse", "fountain", "bank", "frogstatue", "swordrock":
 			pass  # _draw로 그린다 (임시 도형)
 		"redchest":
 			_make_sprite("chest", Rect2(0, 0, 16, 18))
@@ -102,7 +106,7 @@ func _process(delta: float) -> void:
 		_cd -= delta
 		if _cd <= 0.0:
 			_set_ready(true)
-	if kind in ["sparkle", "board", "casino", "bard", "smith", "exit", "gate", "chief", "signpost", "warehouse", "redchest", "fountain", "medalking"]:
+	if kind in ["sparkle", "board", "casino", "bard", "smith", "exit", "gate", "chief", "signpost", "warehouse", "redchest", "fountain", "medalking", "bank", "frogstatue", "swordrock"]:
 		queue_redraw()
 	if kind == "recruit":
 		_sprite.position.y = -absf(sin(_t * 3.0)) * 2.0
@@ -214,6 +218,40 @@ func _draw() -> void:
 			draw_colored_polygon(PackedVector2Array([
 				Vector2(-5, -28), Vector2(-5, -32), Vector2(-2.5, -29), Vector2(0, -33),
 				Vector2(2.5, -29), Vector2(5, -32), Vector2(5, -28)]), Color(1.0, 0.83, 0.29, ka))
+		"bank":
+			# 은행 — 돌기둥 금고 (임시 도형, 나중에 png 교체)
+			draw_rect(Rect2(-16, -24, 32, 24), Color("b8b2a0"), true)
+			draw_rect(Rect2(-16, -24, 32, 24), Color("5a564a"), false, 1.5)
+			draw_colored_polygon(PackedVector2Array([Vector2(-18, -24), Vector2(18, -24), Vector2(0, -33)]), Color("d0c8b0"))
+			for i in 3:
+				draw_rect(Rect2(-12 + i * 9, -20, 4, 16), Color("8a8474"), true)
+			# 금화 표식
+			var ba := 0.75 + 0.25 * sin(_t * 2.5)
+			draw_circle(Vector2(0, -28), 2.5, Color(1.0, 0.83, 0.29, ba))
+		"frogstatue":
+			# 개구리 석상 — 입에 잔돈을 넣는다 (임시 도형)
+			draw_circle(Vector2(0, -5), 6.0, Color("7a8a6a"))
+			draw_circle(Vector2(0, -12), 4.5, Color("8a9a78"))
+			draw_circle(Vector2(-2, -13), 1.2, Color("2a3020"))
+			draw_circle(Vector2(2, -13), 1.2, Color("2a3020"))
+			draw_rect(Rect2(-2.5, -10.5, 5, 1.5), Color("2a3020"), true)  # 입 (투입구)
+			var fa := 0.5 + 0.5 * sin(_t * 3.0)
+			draw_circle(Vector2(0, -18), 1.2, Color(1.0, 0.83, 0.29, fa))
+		"swordrock":
+			# 검이 꽂힌 바위 (서사시 제 2절 — 임시 도형)
+			draw_circle(Vector2(0, -4), 9.0, Color("7a7468"))
+			draw_circle(Vector2(-4, -2), 5.0, Color("8a8478"))
+			if Game.sword_rock < 2:
+				# 검신 + 자루 — 은은히 빛난다
+				var swa := 0.7 + 0.3 * sin(_t * 2.0)
+				draw_rect(Rect2(-1, -22, 2, 14), Color(0.85, 0.9, 1.0, swa), true)
+				draw_rect(Rect2(-4, -23, 8, 2), Color(0.9, 0.8, 0.4, swa), true)
+				draw_rect(Rect2(-1, -27, 2, 4), Color(0.7, 0.55, 0.3, swa), true)
+				for i in 2:
+					var ph := fmod(_t * 1.2 + i * 0.5, 1.0)
+					draw_circle(Vector2(sin(_t + i * 3.0) * 5.0, -20.0 - ph * 8.0), 1.0, Color(1.0, 0.95, 0.7, 1.0 - ph))
+			else:
+				draw_rect(Rect2(-1, -10, 2, 3), Color("4a4640"), true)  # 뽑힌 자리
 
 # ---------------------------------------------------------------- 쿨타임
 
@@ -273,6 +311,10 @@ func hover_name() -> String:
 		"fountain": return "분수"
 		"medalking": return "메달왕"
 		"resident": return resident_name
+		"cheatpot": return "치트 항아리"
+		"bank": return "은행"
+		"frogstatue": return "개구리 석상"
+		"swordrock": return "검이 꽂힌 바위"
 		"recruit": return Game.CLASS_DEFS[recruit_cls]["name"]
 	return kind
 
@@ -324,11 +366,23 @@ func flavor() -> String:
 			return "메달왕. 작은 메달이라면 사족을 못 쓴다."
 		"resident":
 			return "%s. 마을의 일원이 되었다." % resident_name
+		"cheatpot":
+			return "치트 항아리. 두드릴 때마다 1000 G. (디버그)"
+		"bank":
+			return "은행이다. 예금은 전멸해도 안전하다. (Space)"
+		"frogstatue":
+			return "개구리 석상. 잔돈을 넣어 달라는 표정이다. (Space)"
+		"swordrock":
+			if Game.sword_rock >= 2:
+				return "검이 뽑힌 바위. 이야기는 이루어졌다."
+			return "바위에 검이 꽂혀 있다. …서사시의 그 검인가?"
 		"recruit":
 			match recruit_cls:
-				"warrior": return "떠돌이 전사. 함께 싸우고 싶어 한다."
+				"knight": return "떠돌이 기사. 방패가 듬직하다."
+				"warrior": return "떠돌이 전사. 도끼가 근질거려 보인다."
 				"mage": return "떠돌이 마법사. 지팡이가 근질거려 보인다."
-				"priest": return "떠돌이 승려. 일행을 걱정스레 보고 있다."
+				"priest": return "떠돌이 사제. 일행을 걱정스레 보고 있다."
+				"monkf": return "떠돌이 무도가. 주먹을 풀고 있다."
 	return "…"
 
 func passive_active() -> bool:
@@ -349,4 +403,7 @@ func pick_radius() -> float:
 		"warehouse", "redchest": return 18.0
 		"sparkle": return 12.0
 		"fountain": return 14.0
+		"bank": return 22.0
+		"frogstatue": return 12.0
+		"swordrock": return 16.0
 	return 16.0

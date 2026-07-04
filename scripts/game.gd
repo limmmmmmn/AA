@@ -14,17 +14,75 @@ const MAX_WINDOWS_HARD := 8
 # 스모크 테스트는 별도 세이브를 쓴다 — 유저의 진짜 세이브를 건드리지 않도록
 var save_path := "user://appears_save.json"
 
-# ---------------------------------------------------------------- 파티
+# ---------------------------------------------------------------- 동료 로스터 (v3.1 §B-3 — 정규 7 + 객원 11)
+## regular = 시그니처 무기 보유 (대장간 강화 대상). 객원은 공용 티어 (무기 없음).
+## passive = 규칙 1개 (수치 나열 금지). 에셋 없는 동료는 임시 틴트 — 유저가 png로 교체 예정.
 
-const CLASS_DEFS := {
-	"hero":    {"name": "용사",   "atk": 4, "hp": 26, "crit": 0.10, "aggro": 1.0, "tex": "res://assets/characters/hero.png",   "frame_h": 26, "weapon": "용사의 검"},
-	"warrior": {"name": "전사",   "atk": 6, "hp": 36, "crit": 0.05, "aggro": 3.0, "tex": "res://assets/characters/knight.png", "frame_h": 25, "weapon": "전사의 검"},
-	"mage":    {"name": "마법사", "atk": 5, "hp": 18, "crit": 0.05, "aggro": 1.0, "tex": "res://assets/characters/mage.png",   "frame_h": 25, "weapon": "마법사의 지팡이"},
-	"priest":  {"name": "승려",   "atk": 2, "hp": 22, "crit": 0.05, "aggro": 1.0, "tex": "res://assets/characters/priest.png", "frame_h": 24, "weapon": "승려의 석장"},
+const COMPANIONS := {
+	# 정규 7
+	"hero":     {"name": "용사",     "regular": true, "passive": "all",     "atk": 4, "hp": 26, "crit": 0.10, "aggro": 1.0, "tex": "res://assets/characters/hero.png",   "frame_h": 26, "tint": Color(1, 1, 1),          "weapon": "용사의 검",
+		"pdesc": "만능 — 모든 창에 균등 기여. 검은 서사시가 벼린다", "hint": "처음부터 함께"},
+	"knight":   {"name": "기사",     "regular": true, "passive": "taunt",   "atk": 5, "hp": 40, "crit": 0.05, "aggro": 3.0, "tex": "res://assets/characters/knight.png", "frame_h": 25, "tint": Color(1, 1, 1),          "weapon": "기사의 대검",
+		"pdesc": "도발 — 피격을 자신에게 집중시킨다", "hint": "골드를 벌면 소문을 듣고 온다"},
+	"warrior":  {"name": "전사",     "regular": true, "passive": "smite",   "atk": 7, "hp": 34, "crit": 0.05, "aggro": 1.5, "tex": "res://assets/characters/knight.png", "frame_h": 25, "tint": Color(1.1, 0.75, 0.65),  "weapon": "전사의 도끼",
+		"pdesc": "강타 — 단일 대상에 큰 데미지 (정예 창 담당)", "hint": "이름난 부자를 찾아온다"},
+	"priest":   {"name": "사제",     "regular": true, "passive": "pray",    "atk": 2, "hp": 22, "crit": 0.05, "aggro": 1.0, "tex": "res://assets/characters/priest.png", "frame_h": 24, "tint": Color(1, 1, 1),          "weapon": "사제의 석장",
+		"pdesc": "기도 — 턴마다 파티가 최대 HP의 2.5%씩 아문다", "hint": "골드를 벌면 소문을 듣고 온다"},
+	"mage":     {"name": "마법사",   "regular": true, "passive": "aoe",     "atk": 5, "hp": 18, "crit": 0.05, "aggro": 1.0, "tex": "res://assets/characters/mage.png",   "frame_h": 25, "tint": Color(1, 1, 1),          "weapon": "마법사의 지팡이",
+		"pdesc": "전체 주문 — 창 안의 전원을 공격 (무리 창 담당)", "hint": "골드를 벌면 소문을 듣고 온다"},
+	"thief":    {"name": "도적",     "regular": true, "passive": "steal",   "atk": 5, "hp": 24, "crit": 0.08, "aggro": 0.7, "tex": "res://assets/characters/hero.png",   "frame_h": 26, "tint": Color(0.75, 0.7, 1.1),   "weapon": "도적의 단검",
+		"pdesc": "훔치기 — 골드 배율 상승 + 가끔 작은 메달을 슬쩍", "hint": "서사시 속에서 나타난다"},
+	"monkf":    {"name": "무도가",   "regular": true, "passive": "crit",    "atk": 6, "hp": 28, "crit": 0.20, "aggro": 1.2, "tex": "res://assets/characters/hero.png",   "frame_h": 26, "tint": Color(1.15, 0.95, 0.6),  "weapon": "무도가의 권갑",
+		"pdesc": "회심 — 파티의 회심의 일격 확률 상승", "hint": "큰 부를 이룬 자를 시험하러 온다"},
+	# 객원 11 (임시: 촌장 스프라이트 개별 틴트)
+	"druid":    {"name": "드루이드", "regular": false, "passive": "charm",    "atk": 3, "hp": 24, "crit": 0.05, "aggro": 1.0, "tex": "res://assets/NPCs/village_chief.png", "frame_h": 26, "tint": Color(0.6, 1.1, 0.6),
+		"pdesc": "매혹 — 승리 시 가끔 적이 아군이 되어 따라온다", "hint": "서사시 제 1절"},
+	"merchant_c": {"name": "상인",   "regular": false, "passive": "discount", "atk": 2, "hp": 22, "crit": 0.05, "aggro": 0.8, "tex": "res://assets/NPCs/village_chief.png", "frame_h": 26, "tint": Color(1.1, 0.95, 0.6),
+		"pdesc": "장사꾼의 눈 — 전 메뉴 10% 할인 + 전투 후 잡템 습득", "hint": "상점 주민이 곧 동료"},
+	"bardc":    {"name": "바드",     "regular": false, "passive": "linger",   "atk": 3, "hp": 20, "crit": 0.05, "aggro": 0.8, "tex": "res://assets/NPCs/village_chief.png", "frame_h": 26, "tint": Color(0.65, 1.0, 0.75),
+		"pdesc": "여운 — 주시 버프가 커서를 떼도 2.5초 잔류", "hint": "음유시인이 곧 동료"},
+	"fisher_a": {"name": "어부 형",  "regular": false, "passive": "fish",     "atk": 4, "hp": 30, "crit": 0.05, "aggro": 1.0, "tex": "res://assets/NPCs/village_chief.png", "frame_h": 26, "tint": Color(0.6, 0.8, 1.15),
+		"pdesc": "낚시 — 발굴에서 가끔 물고기(보너스 골드)", "hint": "아우와 함께 온다"},
+	"fisher_b": {"name": "어부 아우","regular": false, "passive": "net",      "atk": 4, "hp": 28, "crit": 0.05, "aggro": 1.0, "tex": "res://assets/NPCs/village_chief.png", "frame_h": 26, "tint": Color(0.5, 0.7, 1.05),
+		"pdesc": "그물 — 무리 창(적 3+)의 골드 +30%", "hint": "형과 함께 온다"},
+	"monk":     {"name": "스님",     "regular": false, "passive": "requiem",  "atk": 3, "hp": 26, "crit": 0.05, "aggro": 1.0, "tex": "res://assets/NPCs/village_chief.png", "frame_h": 26, "tint": Color(0.9, 0.85, 0.7),
+		"pdesc": "성불 — 유령 동료가 시간이 지나면 자동으로 되살아난다", "hint": "신부가 부른 오랜 벗"},
+	"dancer":   {"name": "무희",     "regular": false, "passive": "dance",    "atk": 3, "hp": 20, "crit": 0.08, "aggro": 0.8, "tex": "res://assets/NPCs/village_chief.png", "frame_h": 26, "tint": Color(1.15, 0.7, 0.9),
+		"pdesc": "춤 — 모든 전투창의 턴 속도 소폭 상승", "hint": "카지노가 생기면 찾아온다"},
+	"miner":    {"name": "광부",     "regular": false, "passive": "pickaxe",  "atk": 5, "hp": 32, "crit": 0.05, "aggro": 1.2, "tex": "res://assets/NPCs/village_chief.png", "frame_h": 26, "tint": Color(0.8, 0.7, 0.55),
+		"pdesc": "곡괭이 — 발굴 보상 상승 + 메달 확률 상승", "hint": "삽을 든 자를 찾아온다"},
+	"hunter":   {"name": "사냥꾼",   "regular": false, "passive": "track",    "atk": 5, "hp": 26, "crit": 0.10, "aggro": 1.0, "tex": "res://assets/NPCs/village_chief.png", "frame_h": 26, "tint": Color(0.7, 0.9, 0.6),
+		"pdesc": "추적 — 수배된 몬스터에게 데미지 보너스", "hint": "게시판을 보고 찾아온다"},
+	"cook":     {"name": "요리사",   "regular": false, "passive": "meal",     "atk": 3, "hp": 28, "crit": 0.05, "aggro": 1.0, "tex": "res://assets/NPCs/village_chief.png", "frame_h": 26, "tint": Color(1.05, 1.0, 0.8),
+		"pdesc": "한 끼 — 성수가 훨씬 잘 차오른다", "hint": "여관 주인이 곧 동료"},
+	"banker":   {"name": "은행원",   "regular": false, "passive": "interest", "atk": 2, "hp": 22, "crit": 0.05, "aggro": 0.8, "tex": "res://assets/NPCs/village_chief.png", "frame_h": 26, "tint": Color(0.85, 0.9, 1.0),
+		"pdesc": "이자 감각 — 편성 중 필드 골드 +10%. 영입하면 은행이 선다", "hint": "큰돈의 냄새를 맡고 온다"},
 }
-const PARTY_ORDER := ["hero", "warrior", "mage", "priest"]
+const CLASS_DEFS := COMPANIONS  # 하위 호환 별칭
+const PARTY_MAX := 5
 
-var members: Array = []  # {cls, name, hp, max_hp, ghost, weapon_lv}
+## 합체기 3종 (v3.1 §B-4 — 딱 3종 동결). needs = 편성 조건 id, ghost = 유령 필요
+const COMBO_DEFS := [
+	{"id": "tuna", "name": "참치 어택", "needs": ["fisher_a", "fisher_b"], "ghost": false,
+		"cutin": "어부 형제의 힘이 하나가 되었다!\n참치 어택!!", "tex": "res://assets/combined/tuna.png", "fallback": "res://assets/enemies/slime_fly.png", "tint": Color(0.5, 0.7, 1.3)},
+	{"id": "frog", "name": "개구리의 왈츠", "needs": ["druid", "bardc"], "ghost": false,
+		"cutin": "드루이드와 바드의 선율이 겹쳐진다!\n개구리의 왈츠!", "tex": "res://assets/combined/frog.png", "fallback": "res://assets/enemies/slime.png", "tint": Color(0.5, 1.3, 0.5)},
+	{"id": "skeleton", "name": "명계의 행진", "needs": ["priest"], "ghost": true,
+		"cutin": "사제의 기도가 저승에 닿았다!\n명계의 행진!!", "tex": "res://assets/combined/skeleton.png", "fallback": "res://assets/enemies/bat.png", "tint": Color(1.2, 1.2, 1.25)},
+]
+
+var members: Array = []              # 편성된 파티의 런타임 [{cls, name, hp, max_hp, ghost, weapon_lv}]
+var companions_owned := {"hero": true}
+var party_ids: Array = ["hero"]      # 현재 편성 (여관에서 교체, 최대 5)
+var companion_weapons := {}          # id → 무기 레벨 (정규만)
+var book_seen := {"hero": true}      # 동료들의 서 — 회차 넘어 영구 기록
+var combo_gauge := 0.0               # 합체기 게이지 0..1
+var combo_hint_known := false        # 서사시로 힌트 해금
+var charmed: Array = []              # 매혹된 몬스터 defs (다음 전투 1회 참전, 최대 2)
+var thief_away := false              # 도적 배신 드라마 (서사시)
+var thief_return_at := 0.0
+var sword_rock := 0                  # 검이 꽂힌 바위: 0 미스폰 / 1 스폰됨 / 2 뽑음
+var playtime := 0.0
 
 # ---------------------------------------------------------------- 재화/성장
 
@@ -36,19 +94,30 @@ var run_count: int = 1  # 회차
 var kills: int = 0
 
 # 업그레이드 — 담당 건물의 커맨드 메뉴로 분산 (v3.0 §B-5. 공격력은 대장간 무기가 담당)
+# gaze~holy_regen = 교회 "축복" 계열 (v3.1 §B-7), flee/telepathy = 촌장
 var up := {
 	"speed": 0, "win_cap": 0, "battle_speed": 0,
 	"gold_mult": 0, "max_hp": 0, "density": 0,
 	"shovel": 0, "radius": 0, "intuition": 0,
+	"gaze": 0, "heal_eye": 0, "golden_hands": 0,
+	"holy_max": 0, "holy_regen": 0,
+	"flee": 0, "telepathy": 0,
+	"bank_cap": 0, "bank_rate": 0,
 }
+
+# 성수 게이지 (v3.1 §B-7-4 — 수량제 아님, 자동 재생 리소스)
+var holy := 12.0
+
+# 은행 (v3.1 §B-8 — 예금은 전멸에도 불가침)
+var deposit := 0
 
 # 진행 플래그 — v3.0 한 화면 월드
 var fields_unlocked: Array = [true, false, false, false, false]  # 초원/숲/동굴/설원/마왕성
 var bosses_defeated: Array = [false, false, false, false, false]
 var posters_f: Array = [0, 0, 0, 0, 0]  # 필드별 수배서 (마왕성 제외)
 var extra_pots := 0
-var buildings := {"inn": false, "board": false, "church": false, "smith": false, "chest": false, "casino": false, "bard": false, "medalking": false, "shop": false}
-var recruits_spawned := {"warrior": false, "mage": false, "priest": false}
+var buildings := {"inn": false, "board": false, "church": false, "smith": false, "chest": false, "casino": false, "bard": false, "medalking": false, "shop": false, "bank": false}
+var recruits_spawned := {"knight": false, "mage": false, "priest": false, "warrior": false, "monkf": false}
 var discovered := {}                 # 검시(도감): kind 문자열 → true
 var golden_first_done := false
 var golden_info := false             # 게시판 "황금 슬라임 목격 정보"
@@ -99,6 +168,7 @@ const MEDAL_DEFS := {
 	"metal_crown":   {"name": "메탈 슬라임의 왕관",  "desc": "황금 슬라임이 자주 오지만 빨리 도망간다", "hint": "메달왕이 교환해 준다"},
 	"slime_incense": {"name": "슬라임 유인향",       "desc": "황금 슬라임이 주시 중인 창에만 나타난다", "hint": "카지노 교환소 한정"},
 	"anvil_bless":   {"name": "모루의 축복",         "desc": "대장간 실패 없음, 대신 +3도 없음",        "hint": "회심의 필살작을 3번 쳐내면…"},
+	"loyal_heart":   {"name": "의리의 심장",         "desc": "도적의 훔치기 확률 2배",                  "hint": "돌아온 자만이 줄 수 있다"},
 }
 
 func medal_slots() -> int:
@@ -141,10 +211,7 @@ func buy_verse() -> bool:
 	if not try_spend(EPIC_COSTS[epic_verses]):
 		return false
 	epic_verses += 1
-	# 전설의 검은 돈이 아니라 이야기로 벼려진다
-	for m in members:
-		if m["cls"] == "hero":
-			m["weapon_lv"] = epic_verses
+	# v3.1: 절은 '사건'을 판다 — 실제 사건 연출은 main._on_verse_bought 담당
 	party_changed.emit()
 	return true
 
@@ -197,50 +264,91 @@ func _ready() -> void:
 	load_game()
 
 func _reset_party() -> void:
+	companions_owned = {"hero": true}
+	party_ids = ["hero"]
+	companion_weapons = {}
+	rebuild_party()
+
+func rebuild_party() -> void:
+	# 편성(party_ids)에서 런타임 members를 재구성 — HP는 가득 채워서
 	members = []
-	_add_member("hero")
-
-func _add_member(cls: String) -> void:
-	var d: Dictionary = CLASS_DEFS[cls]
-	members.append({
-		"cls": cls, "name": d["name"], "hp": d["hp"], "max_hp": d["hp"],
-		"ghost": false, "weapon_lv": 0,
-	})
-
-func recruit(cls: String) -> void:
-	_add_member(cls)
+	for id in party_ids:
+		if not COMPANIONS.has(id):
+			continue
+		var d: Dictionary = COMPANIONS[id]
+		members.append({
+			"cls": id, "name": d["name"], "hp": d["hp"], "max_hp": d["hp"],
+			"ghost": false, "weapon_lv": int(companion_weapons.get(id, 0)),
+		})
+	refresh_max_hp()
+	heal_all_full()
 	party_changed.emit()
 
+func own_companion(id: String) -> bool:
+	# 새 동료 획득 — 자리가 있으면 자동 편성. 이미 있으면 false
+	if companions_owned.get(id, false):
+		return false
+	companions_owned[id] = true
+	book_seen[id] = true
+	if party_ids.size() < PARTY_MAX and not party_ids.has(id):
+		party_ids.append(id)
+		rebuild_party()
+	return true
+
+func toggle_party(id: String) -> bool:
+	# 여관 편성 — 용사는 고정
+	if id == "hero" or not companions_owned.get(id, false):
+		return false
+	if party_ids.has(id):
+		party_ids.erase(id)
+	elif party_ids.size() < PARTY_MAX:
+		party_ids.append(id)
+	else:
+		return false
+	rebuild_party()
+	return true
+
+func recruit(cls: String) -> void:  # 하위 호환
+	own_companion(cls)
+
 func has_member(cls: String) -> bool:
+	return party_ids.has(cls)
+
+func passive_on(pid: String) -> bool:
+	# 편성 중이고 유령이 아닌 동료의 패시브만 살아 있다
 	for m in members:
-		if m["cls"] == cls:
+		if not m["ghost"] and COMPANIONS[m["cls"]]["passive"] == pid:
 			return true
 	return false
+
+func companion_count() -> int:
+	var n := 0
+	for k in companions_owned.keys():
+		if companions_owned[k]:
+			n += 1
+	return n
 
 # ---------------------------------------------------------------- 스탯 공식
 
 func member_atk(idx: int) -> int:
 	var m: Dictionary = members[idx]
-	var base: int = CLASS_DEFS[m["cls"]]["atk"]
+	var base: int = COMPANIONS[m["cls"]]["atk"]
 	var atk := float(base + m["weapon_lv"] * 2 + int(level / 2.0))
 	if medal_on("ghost_warcry"):
 		atk *= 1.0 + 0.15 * ghost_count()
 	return int(atk)
 
 func member_crit(idx: int) -> float:
-	return CLASS_DEFS[members[idx]["cls"]]["crit"]
+	var c: float = COMPANIONS[members[idx]["cls"]]["crit"]
+	if passive_on("crit"):
+		c += 0.10  # 무도가의 회심 — 파티 전체
+	return c
 
 func member_max_hp(idx: int) -> int:
 	var m: Dictionary = members[idx]
-	var base: int = CLASS_DEFS[m["cls"]]["hp"]
-	return base + up["max_hp"] * 6 + (level - 1) * 3
-
-func priest_heal_amount() -> int:
-	var wl := 0
-	for m in members:
-		if m["cls"] == "priest":
-			wl = m["weapon_lv"]
-	return 3 + int(level / 2.0) + wl
+	var base: int = COMPANIONS[m["cls"]]["hp"]
+	# 침구 개선 = %화 (v3.1 §B-6 — 덧셈 방어는 곱셈 공격을 못 따라간다)
+	return int((base + (level - 1) * 3) * (1.0 + 0.08 * up["max_hp"]))
 
 func refresh_max_hp() -> void:
 	for i in members.size():
@@ -248,6 +356,72 @@ func refresh_max_hp() -> void:
 		members[i]["max_hp"] = mx
 		members[i]["hp"] = mini(members[i]["hp"], mx)
 		member_changed.emit(i)
+
+# ---------------------------------------------------------------- 시선(호버) / 성수 / 합체기 / 은행
+
+func gaze_speed() -> float:
+	return 1.5 + 0.1 * up["gaze"]      # 주시 강화
+
+func gaze_crit() -> float:
+	return 0.15 + 0.03 * up["gaze"]
+
+func holy_max() -> float:
+	return 12.0 + 4.0 * up["holy_max"]  # 성수 그릇 확장 (초 단위)
+
+func holy_regen_rate() -> float:
+	var r: float = 1.0 * (1.0 + 0.35 * up["holy_regen"])  # 샘의 축복
+	if passive_on("meal"):
+		r *= 1.5  # 요리사의 한 끼
+	return r
+
+func holy_heal_pct() -> float:
+	return 0.02 + 0.005 * up["heal_eye"]  # 치유의 눈길 (초당 최대 HP %)
+
+func active_combo() -> Dictionary:
+	# 현재 편성으로 성립하는 합체기 (편성 퍼즐 — v3.1 §B-4)
+	for cd in COMBO_DEFS:
+		var ok := true
+		for need in cd["needs"]:
+			if not party_ids.has(need):
+				ok = false
+				break
+		if ok and cd["ghost"] and ghost_count() == 0:
+			ok = false
+		if ok:
+			return cd
+	return {}
+
+func bank_cap() -> int:
+	return int(1000 * pow(2.5, up["bank_cap"]))
+
+func bank_rate() -> float:
+	return 0.005 + 0.002 * up["bank_rate"]  # 30초 틱당 이자율
+
+func bank_deposit(v: int) -> int:
+	# 넣을 수 있는 만큼만 — 실제 입금액 반환
+	var room := maxi(0, bank_cap() - deposit)
+	var amt: int = mini(mini(v, gold), room)
+	if amt <= 0:
+		return 0
+	gold -= amt
+	deposit += amt
+	gold_changed.emit(gold)
+	return amt
+
+func bank_withdraw(v: int) -> int:
+	var amt: int = mini(v, deposit)
+	if amt <= 0:
+		return 0
+	deposit -= amt
+	add_gold(amt)
+	return amt
+
+func add_combo_gauge() -> void:
+	# 승리할 때마다 게이지가 차오른다 (합체기 성립 편성일 때만)
+	if active_combo().is_empty():
+		combo_gauge = 0.0
+		return
+	combo_gauge = minf(1.0, combo_gauge + 0.08)
 
 func max_windows() -> int:
 	var n: int = 1 + up["win_cap"] + (run_count - 1) + casino_wincap
@@ -265,13 +439,25 @@ func turn_interval() -> float:
 	var t := 1.1 * pow(0.93, up["battle_speed"])
 	if medal_on("coward_flag"):
 		t *= 0.5
+	if passive_on("dance"):
+		t *= 0.93  # 무희의 춤
 	return t
 
 func gold_multiplier() -> float:
 	var g := pow(1.15, up["gold_mult"]) * (1.0 + 0.2 * (run_count - 1))
 	if medal_on("aqua_regia"):
 		g *= 2.0
+	if passive_on("steal"):
+		g *= 1.3 if medal_on("loyal_heart") else 1.15  # 도적의 훔치기
+	if passive_on("interest"):
+		g *= 1.10  # 은행원의 이자 감각
 	return g
+
+func price(c: int) -> int:
+	# 상인(객원) 편성 시 전 메뉴 10% 할인
+	if passive_on("discount"):
+		return maxi(1, int(ceil(c * 0.9)))
+	return c
 
 # ---------------------------------------------------------------- 골드/경험치
 
@@ -386,8 +572,10 @@ func pick_target() -> int:
 	for i in members.size():
 		if members[i]["ghost"]:
 			continue
-		var w: float = CLASS_DEFS[members[i]["cls"]]["aggro"]
-		for k in int(w):
+		var w: float = COMPANIONS[members[i]["cls"]]["aggro"]
+		if members[i]["cls"] == "knight":
+			w *= 2.0  # 기사의 도발
+		for k in maxi(1, int(w)):
 			pool.append(i)
 	if pool.is_empty():
 		return -1
@@ -396,16 +584,25 @@ func pick_target() -> int:
 # ---------------------------------------------------------------- 무기 (대장간)
 
 func weapon_cost(idx: int) -> int:
-	return int(25 * pow(1.75, members[idx]["weapon_lv"]))
+	return price(int(25 * pow(1.75, members[idx]["weapon_lv"])))
+
+func set_weapon_lv(cls: String, lv: int) -> void:
+	# 무기 레벨은 편성 재구성에도 살아남도록 companion_weapons에 기록
+	companion_weapons[cls] = lv
+	for m in members:
+		if m["cls"] == cls:
+			m["weapon_lv"] = lv
+	party_changed.emit()
 
 func weapon_name(idx: int) -> String:
 	var m: Dictionary = members[idx]
 	var lv: int = m["weapon_lv"]
 	if m["cls"] == "hero":
-		# 전설의 검 — 서사시로만 자란다
+		# 전설의 검 — 돈이 아니라 이야기(서사시)와 바위가 벼린다
 		var stages := ["녹슨 검", "낡은 검", "기억의 검", "새벽의 검", "여명의 검", "전설의 검", "전설의 검 (진)"]
 		return stages[clampi(lv, 0, stages.size() - 1)]
-	var base: String = CLASS_DEFS[m["cls"]]["weapon"]
+	var d: Dictionary = COMPANIONS[m["cls"]]
+	var base: String = d.get("weapon", "여행자의 지팡이")  # 객원은 공용 무기
 	if lv >= 10:
 		base = "빛나는 " + base
 	elif lv >= 5:
@@ -434,8 +631,8 @@ func do_prestige() -> void:
 		up[k] = 0
 	for k in assistants.keys():
 		assistants[k] = 0
-	buildings = {"inn": false, "board": false, "church": false, "smith": false, "chest": false, "casino": false, "bard": false, "medalking": false, "shop": false}
-	recruits_spawned = {"warrior": false, "mage": false, "priest": false}
+	buildings = {"inn": false, "board": false, "church": false, "smith": false, "chest": false, "casino": false, "bard": false, "medalking": false, "shop": false, "bank": false}
+	recruits_spawned = {"knight": false, "mage": false, "priest": false, "warrior": false, "monkf": false}
 	residents = {}
 	kill_counts = {}
 	medals_small = 0
@@ -446,9 +643,16 @@ func do_prestige() -> void:
 	golden_first_done = false
 	golden_info = false
 	ending_seen = false
-	# 영구 유지: 훈장 도감/장착, 서사시 이력, 도감(discovered), 필살작 기록, 카지노 상한
+	# v3.1 리셋 (book_seen은 영구 — 동료들의 서는 회차를 기억한다)
+	combo_gauge = 0.0
+	charmed = []
+	thief_away = false
+	thief_return_at = 0.0
+	sword_rock = 0
+	holy = holy_max()
+	deposit = 0
+	# 영구 유지: 훈장 도감/장착, 서사시 이력, 도감(discovered), 필살작 기록, 카지노 상한, book_seen, combo_hint_known
 	_reset_party()
-	members[0]["weapon_lv"] = epic_verses  # 전설의 검은 이야기를 기억한다
 	save_game()
 	gold_changed.emit(gold)
 	chapter_changed.emit(progress_tier())
@@ -462,7 +666,7 @@ func save_game() -> void:
 	for m in members:
 		mem_save.append({"cls": m["cls"], "weapon_lv": m["weapon_lv"], "hp": m["hp"], "ghost": m["ghost"]})
 	var data := {
-		"version": 4,
+		"version": 5,
 		"gold": gold, "total_earned": total_earned,
 		"level": level, "exp": exp, "run_count": run_count, "kills": kills,
 		"up": up,
@@ -479,6 +683,12 @@ func save_game() -> void:
 		"residents": residents, "kill_counts": kill_counts,
 		"medals_small": medals_small, "medals_spent": medals_spent,
 		"keys": keys, "opened": opened, "signpost_seen": signpost_seen,
+		# v3.1
+		"companions_owned": companions_owned, "party_ids": party_ids,
+		"companion_weapons": companion_weapons, "book_seen": book_seen,
+		"combo_gauge": combo_gauge, "combo_hint_known": combo_hint_known,
+		"thief_away": thief_away, "thief_return_at": thief_return_at,
+		"sword_rock": sword_rock, "playtime": playtime, "deposit": deposit,
 	}
 	var f := FileAccess.open(save_path, FileAccess.WRITE)
 	if f:
@@ -550,17 +760,44 @@ func load_game() -> void:
 	var uiu: Dictionary = d.get("ui_unlocked", {})
 	for k in ui_unlocked.keys():
 		ui_unlocked[k] = bool(uiu.get(k, false))
+	# v3.1 동료 데이터 (v4 세이브는 members 목록에서 유추 — 마이그레이션)
 	var mem: Array = d.get("members", [])
-	if not mem.is_empty():
-		members = []
+	if d.has("companions_owned"):
+		companions_owned = d.get("companions_owned", {"hero": true})
+		party_ids = d.get("party_ids", ["hero"])
+		companion_weapons = d.get("companion_weapons", {})
+		book_seen = d.get("book_seen", {"hero": true})
+	else:
+		companions_owned = {"hero": true}
+		party_ids = []
+		companion_weapons = {}
 		for ms in mem:
-			_add_member(ms["cls"])
-			var m: Dictionary = members[members.size() - 1]
-			m["weapon_lv"] = int(ms.get("weapon_lv", 0))
-			m["ghost"] = bool(ms.get("ghost", false))
-	refresh_max_hp()
-	for i in members.size():
-		var msave: Dictionary = mem[i] if i < mem.size() else {}
-		members[i]["hp"] = clampi(int(msave.get("hp", members[i]["max_hp"])), 0, members[i]["max_hp"])
-		if members[i]["ghost"]:
-			members[i]["hp"] = 0
+			var c: String = ms["cls"]
+			# v3.0 warrior 슬롯은 v3.1 로스터에도 존재 — 그대로 편성
+			if COMPANIONS.has(c):
+				companions_owned[c] = true
+				book_seen[c] = true
+				if party_ids.size() < PARTY_MAX:
+					party_ids.append(c)
+				companion_weapons[c] = int(ms.get("weapon_lv", 0))
+		if party_ids.is_empty():
+			party_ids = ["hero"]
+	combo_gauge = float(d.get("combo_gauge", 0.0))
+	combo_hint_known = bool(d.get("combo_hint_known", false))
+	thief_away = bool(d.get("thief_away", false))
+	thief_return_at = float(d.get("thief_return_at", 0.0))
+	sword_rock = int(d.get("sword_rock", 0))
+	playtime = float(d.get("playtime", 0.0))
+	deposit = int(d.get("deposit", 0))
+	holy = holy_max()
+	# 편성 재구성 후 저장된 HP/유령 상태 복원
+	rebuild_party()
+	for ms in mem:
+		for i in members.size():
+			if members[i]["cls"] == ms["cls"]:
+				members[i]["ghost"] = bool(ms.get("ghost", false))
+				members[i]["hp"] = clampi(int(ms.get("hp", members[i]["max_hp"])), 0, members[i]["max_hp"])
+				if members[i]["ghost"]:
+					members[i]["hp"] = 0
+				member_changed.emit(i)
+				break

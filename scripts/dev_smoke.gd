@@ -123,15 +123,21 @@ func _run() -> void:
 	main.hud.close_menu()
 	print("[SMOKE] 분산 업글 OK — speed/max_hp/gold_mult")
 
-	# 8.5) 여관 회복 + 대장간 판정
+	# 8.5) 여관 회복 + 대장간 판정 (v3.1: 무기는 companion_weapons에 기억된다)
 	if not Game.has_member("warrior"):
-		Game.recruit("warrior")
+		Game.own_companion("warrior")
 	Game.damage_member(0, 5)
 	main.hud.open_inn()
 	main.hud._inn_rest()
 	assert(Game.members[0]["hp"] == Game.members[0]["max_hp"])
-	main.hud._apply_forge(1, 3)
-	print("[SMOKE] 여관/대장간 OK — 무기 +%d" % Game.members[1]["weapon_lv"])
+	var forge_idx := -1
+	for i in Game.members.size():
+		if Game.members[i]["cls"] == "warrior":
+			forge_idx = i
+	assert(forge_idx >= 0)
+	main.hud._apply_forge(forge_idx, 3)
+	assert(int(Game.companion_weapons.get("warrior", 0)) == 3)  # 편성을 넘어 기억
+	print("[SMOKE] 여관/대장간 OK — 무기 +%d" % Game.members[forge_idx]["weapon_lv"])
 
 	# 9) 도박사 영입 → 카지노 + 서사시
 	assert(main.try_pay_resident("gambler"))
@@ -139,27 +145,104 @@ func _run() -> void:
 	assert(Game.buildings["casino"])
 	Game.coins += 600
 	main.hud.open_casino()
+	# _menu_panel이 _menu_kind를 지우면 안 된다 (슬롯 가드가 여기 걸린다)
+	assert(main.hud._menu_kind == "casino")
+	assert(main.hud.is_menu_open())
+	var coins_before: int = Game.coins
 	main.hud._casino_spin()
+	await get_tree().create_timer(0.1).timeout
+	assert(Game.coins == coins_before - 1)   # 스핀이 실제로 코인을 소모했다
 	await get_tree().create_timer(2.5).timeout
 	main.hud._casino_exchange("mimic_teeth", 300)
 	main.hud.close_menu()
 	assert(Game.medals_owned.has("mimic_teeth"))
 	while not Game.epic_complete():
 		Game.add_gold(20000)
-		Game.buy_verse()
-	print("[SMOKE] 카지노/서사시 OK — %s" % Game.weapon_name(0))
+		var vi: int = Game.epic_verses
+		if Game.buy_verse():
+			main.on_verse_bought(vi)  # 절은 사건을 판다 (v3.1)
+	print("[SMOKE] 카지노/서사시 OK — 사건 발화 완료")
 
-	# 10) 전멸 → 부활
+	# 9.6) v3.1 — 서사시 사건 검증 (드루이드/검바위/도적/합체기 힌트)
+	await get_tree().create_timer(3.0).timeout
+	assert(Game.companions_owned.get("druid", false))
+	assert(Game.sword_rock >= 1)
+	assert(Game.combo_hint_known)
+	print("[SMOKE] 서사시 사건 OK — 드루이드/검바위/힌트")
+
+	# 9.7) v3.1 — 편성 + 합체기 (어부 형제 → 참치 어택)
+	Game.own_companion("fisher_a")
+	Game.own_companion("fisher_b")
+	for id in Game.party_ids.duplicate():
+		if id != "hero" and id != "fisher_a" and id != "fisher_b" and Game.party_ids.size() > 3:
+			Game.toggle_party(id)
+	if not Game.party_ids.has("fisher_a"):
+		assert(Game.toggle_party("fisher_a"))
+	if not Game.party_ids.has("fisher_b"):
+		assert(Game.toggle_party("fisher_b"))
+	assert(not Game.active_combo().is_empty())
+	Game.combo_gauge = 1.0
+	var mons3: Array = []
+	for m in get_tree().get_nodes_in_group("monster"):
+		if is_instance_valid(m) and not m.is_boss:
+			mons3.append(m)
+	assert(mons3.size() >= 1)
+	main._bump_monster(mons3[0])
+	await get_tree().create_timer(0.8).timeout
+	var cw: BattleWindow = null
+	for w2 in main.windows:
+		if is_instance_valid(w2) and not w2.closing:
+			cw = w2
+	assert(cw != null)
+	main._fire_combo()
+	await get_tree().create_timer(2.5).timeout
+	assert(Game.combo_gauge < 0.2)  # 발동으로 리셋 (직후 승리가 +0.08 줄 수 있다)
+	assert(cw == null or not is_instance_valid(cw) or cw.sim.alive_enemies().is_empty())
+	print("[SMOKE] 합체기 OK — 참치 어택")
+
+	# 9.8) v3.1 — 교회 축복 + 도망 나팔
+	Game.add_gold(50000)
+	main.hud.open_church()
+	main.hud._buy_up("gaze", 120, "church")
+	assert(Game.up["gaze"] == 1 and Game.gaze_speed() > 1.5)
+	main.hud._buy_up("golden_hands", 200, "church")
+	assert(Game.up["golden_hands"] == 1)
+	main.hud.open_chief()
+	main.hud._buy_up("flee", 300, "chief")
+	assert(Game.up["flee"] == 1)
+	main.hud.close_menu()
+	print("[SMOKE] 축복/도망 OK")
+
+	# 9.9) v3.1 — 은행 (banker 부탁 → 건물 → 예금)
+	Game.add_exp(200000)  # Lv 8 게이트
+	assert(main.try_pay_companion("banker"))
+	await get_tree().create_timer(3.5).timeout
+	assert(Game.buildings["bank"])
+	assert(Game.companions_owned.get("banker", false))
+	Game.add_gold(2000)
+	var dep := Game.bank_deposit(800)
+	assert(dep > 0 and Game.deposit == dep)
+	print("[SMOKE] 은행 OK — 예금 %d G" % Game.deposit)
+
+	# 10) 전멸 → 부활 (예금은 불가침)
+	var dep_before: int = Game.deposit
 	for i in Game.members.size():
 		Game.damage_member(i, 99999999)
 	await get_tree().create_timer(4.0).timeout
 	assert(Game.alive_count() == Game.members.size())
-	print("[SMOKE] 전멸/부활 OK — gold=%d" % Game.gold)
+	assert(Game.deposit == dep_before)  # v3.1 §B-8 — 전멸 페널티 면제
+	print("[SMOKE] 전멸/부활 OK — gold=%d 예금=%d" % [Game.gold, Game.deposit])
 
-	# 11) 세이브/로드
+	# 11) 세이브/로드 (v5 — 동료/편성/무기/합체기/은행)
+	var owned_n: int = Game.companion_count()
+	var pids: Array = Game.party_ids.duplicate()
 	Game.save_game()
 	Game.load_game()
-	print("[SMOKE] 세이브/로드 OK")
+	assert(Game.companion_count() == owned_n)
+	assert(Game.party_ids == pids)
+	assert(int(Game.companion_weapons.get("warrior", 0)) == 3)
+	assert(Game.deposit == dep_before)
+	print("[SMOKE] 세이브/로드 OK (v5)")
 	print("[SMOKE] 전부 통과!")
 	get_tree().quit()
 

@@ -8,6 +8,8 @@ const POOL_SIZE := 16
 var _streams: Dictionary = {}
 var _pool: Array[AudioStreamPlayer] = []
 var _pool_idx := 0
+var _gaze_player: AudioStreamPlayer      # 주시 루프 (전용 채널)
+var _gaze_count := 0                     # 여러 창 겹침 대비 카운트
 
 func _ready() -> void:
 	for i in POOL_SIZE:
@@ -15,7 +17,19 @@ func _ready() -> void:
 		p.volume_db = -8.0
 		add_child(p)
 		_pool.append(p)
+	_gaze_player = AudioStreamPlayer.new()
+	_gaze_player.volume_db = -26.0
+	add_child(_gaze_player)
 	_build_all()
+
+func gaze_loop(on: bool) -> void:
+	# 주시 중 반짝이는 루프음 — 켜진 창이 하나라도 있으면 재생 (v3.1 §B-7-1)
+	_gaze_count = maxi(0, _gaze_count + (1 if on else -1))
+	if _gaze_count > 0 and not _gaze_player.playing:
+		_gaze_player.stream = _streams.get("gaze_loop")
+		_gaze_player.play()
+	elif _gaze_count == 0 and _gaze_player.playing:
+		_gaze_player.stop()
 
 func play(name: String, pitch: float = 1.0, vol_db: float = 0.0) -> void:
 	if not _streams.has(name):
@@ -165,3 +179,15 @@ func _build_all() -> void:
 	_streams["chest"] = _to_stream(_concat([_tone(392.0, 0.07, 0.35, "square"), _tone(494.0, 0.07, 0.35, "square"), _tone(587.0, 0.12, 0.35, "square")]))
 	# 팔레트 전환 (세계가 물든다)
 	_streams["palette"] = _to_stream(_melody([[262.0, 0.14], [330.0, 0.14], [392.0, 0.14], [523.0, 0.14], [659.0, 0.4]], "tri", 0.4))
+	# 주시 루프 (은은한 샤라락 — 루프 재생용)
+	var gz := _mix(_tone(1568.0, 0.5, 0.10, "sine", 0.0, 1.5), _tone(2093.0, 0.5, 0.07, "sine", 0.0, 1.5), 0.25)
+	var gz_stream := _to_stream(gz)
+	gz_stream.loop_mode = AudioStreamWAV.LOOP_FORWARD
+	gz_stream.loop_end = gz.size()
+	_streams["gaze_loop"] = gz_stream
+	# 합체기 발동 (부오옹↑ + 팡)
+	_streams["combo"] = _to_stream(_mix(_tone(180.0, 0.5, 0.4, "saw", 700.0), _melody([[784.0, 0.08], [1047.0, 0.08], [1568.0, 0.3]], "square", 0.4), 0.35))
+	# 입금/출금 (짤랑짤랑)
+	_streams["bank"] = _to_stream(_concat([_tone(1319.0, 0.05, 0.3, "square"), _silence(0.04), _tone(1568.0, 0.05, 0.3, "square"), _silence(0.04), _tone(1976.0, 0.12, 0.3, "square")]))
+	# 벽 속 목소리 (우웅…)
+	_streams["voice"] = _to_stream(_tone(196.0, 0.6, 0.3, "sine", 40.0, 2.0))

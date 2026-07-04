@@ -47,6 +47,14 @@ var _idle_i := 0
 var _menu_kind := ""
 var menu_hover := ""   # 메뉴 항목 호버 시 설명창에 흘릴 텍스트
 
+# v3.1
+var remote_open := false           # 상인의 텔레파시로 연 메뉴 — 몸 행위 행은 잠긴다
+var _xp_bar: ColorRect
+var _holy_panel: PanelContainer
+var _holy_bar: ColorRect
+var _holy_label: Label
+var _hover_heal_idx := -1          # 치유의 눈길 — 호버 중인 멤버 박스
+
 func _ready() -> void:
 	layer = 10
 	_build()
@@ -75,8 +83,20 @@ func _build() -> void:
 	_top_panel.position = Vector2(8, 8)
 	_top_panel.visible = false
 	add_child(_top_panel)
+	var top_v := VBoxContainer.new()
+	top_v.add_theme_constant_override("separation", 1)
+	_top_panel.add_child(top_v)
 	_top_label = UILib.make_label("", UILib.FS, UILib.COL_GOLD)
-	_top_panel.add_child(_top_label)
+	top_v.add_child(_top_label)
+	# XP 미니바 (v3.1 §B-1 — 정보창 안, 다음 레벨까지의 거리)
+	var xp_bg := ColorRect.new()
+	xp_bg.color = Color(0.15, 0.18, 0.3)
+	xp_bg.custom_minimum_size = Vector2(0, 2)
+	top_v.add_child(xp_bg)
+	_xp_bar = ColorRect.new()
+	_xp_bar.color = Color(0.4, 0.65, 1.0)
+	_xp_bar.size = Vector2(0, 2)
+	xp_bg.add_child(_xp_bar)
 
 	# 말풍선 (호버한 캐릭터 머리 위)
 	_bubble = UILib.make_panel()
@@ -92,13 +112,33 @@ func _build() -> void:
 	# 상시 설명창 — 촌장에게 말을 걸면 태어난다 (베이스라인 y=352, 높이 40)
 	_desc_panel = UILib.make_panel()
 	_desc_panel.position = Vector2(8, 312)
-	_desc_panel.custom_minimum_size = Vector2(240, 40)
+	_desc_panel.custom_minimum_size = Vector2(184, 40)  # v3.1: 성수 게이지 자리를 내준다
 	_desc_panel.visible = false
 	add_child(_desc_panel)
 	_desc_label = UILib.make_label("", UILib.FS)
 	_desc_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_desc_label.custom_minimum_size = Vector2(224, 26)
+	_desc_label.custom_minimum_size = Vector2(168, 26)
 	_desc_panel.add_child(_desc_label)
+
+	# 성수 게이지 (v3.1 §B-7-4) — 교회가 서면 태어난다
+	_holy_panel = UILib.make_panel()
+	_holy_panel.position = Vector2(196, 312)
+	_holy_panel.custom_minimum_size = Vector2(44, 40)
+	_holy_panel.visible = false
+	add_child(_holy_panel)
+	var hv := VBoxContainer.new()
+	hv.add_theme_constant_override("separation", 2)
+	_holy_panel.add_child(hv)
+	_holy_label = UILib.make_label("성수", UILib.FS, UILib.COL_GOLD)
+	hv.add_child(_holy_label)
+	var hbg := ColorRect.new()
+	hbg.color = Color(0.12, 0.15, 0.25)
+	hbg.custom_minimum_size = Vector2(32, 4)
+	hv.add_child(hbg)
+	_holy_bar = ColorRect.new()
+	_holy_bar.color = Color(0.55, 0.8, 1.0)
+	_holy_bar.size = Vector2(32, 4)
+	hbg.add_child(_holy_bar)
 
 	_fx_root = Control.new()
 	_fx_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -127,6 +167,38 @@ func _process(delta: float) -> void:
 			_idle_t = 9.0
 			_idle_i = (_idle_i + 1) % IDLE_LINES.size()
 		_desc_label.text = IDLE_LINES[_idle_i]
+	# 메뉴 스크롤 높이 — 내용에 맞추되 화면을 넘지 않게 (베이스라인 304px)
+	if _menu_sc != null and is_instance_valid(_menu_sc) and _menu_v != null and is_instance_valid(_menu_v):
+		var want: float = minf(_menu_v.get_combined_minimum_size().y, 318.0)
+		if absf(_menu_sc.custom_minimum_size.y - want) > 0.5:
+			_menu_sc.custom_minimum_size = Vector2(312, want)
+	# XP 미니바 — 다음 레벨까지의 거리
+	if _top_panel.visible and is_instance_valid(_xp_bar):
+		var w: float = maxf(0.0, _top_panel.size.x - 16.0)
+		_xp_bar.size = Vector2(w * clampf(float(Game.exp) / maxf(1.0, float(Game.exp_to_next())), 0.0, 1.0), 2)
+	# 성수 — 자동 재생 / 치유의 눈길 호버 시 소모하며 회복 (v3.1 §B-7-4)
+	if Game.buildings["church"]:
+		if not _holy_panel.visible and Game.ui_unlocked["desc"]:
+			_holy_panel.visible = true
+			_birth_pop(_holy_panel)
+		var healing := false
+		if _hover_heal_idx >= 0 and _hover_heal_idx < Game.members.size() and Game.holy > 0.0:
+			var m: Dictionary = Game.members[_hover_heal_idx]
+			if not m["ghost"] and m["hp"] < m["max_hp"]:
+				Game.holy = maxf(0.0, Game.holy - delta)
+				healing = true
+				_heal_accum += float(m["max_hp"]) * Game.holy_heal_pct() * delta
+				if _heal_accum >= 1.0:
+					var amt := int(_heal_accum)
+					_heal_accum -= amt
+					Game.heal_member(_hover_heal_idx, amt)
+		if not healing:
+			Game.holy = minf(Game.holy_max(), Game.holy + Game.holy_regen_rate() * delta)
+		if is_instance_valid(_holy_bar):
+			_holy_bar.size = Vector2(32.0 * clampf(Game.holy / maxf(1.0, Game.holy_max()), 0.0, 1.0), 4)
+			_holy_bar.color = Color(0.9, 0.95, 1.0) if healing else Color(0.55, 0.8, 1.0)
+
+var _heal_accum := 0.0
 
 # ---------------------------------------------------------------- UI 공개 스케줄 (게임이 자라는 게임)
 
@@ -234,6 +306,14 @@ func _rebuild_members() -> void:
 		p.position = Vector2(632 - 74 - (n - 1 - i) * 82, 312)
 		p.custom_minimum_size = Vector2(74, 40)
 		add_child(p)
+		# 치유의 눈길 — 멤버 박스를 지그시 바라보면 성수가 상처를 씻는다 (v3.1)
+		var mi := i
+		p.mouse_entered.connect(func():
+			if Game.up["heal_eye"] > 0:
+				_hover_heal_idx = mi)
+		p.mouse_exited.connect(func():
+			if _hover_heal_idx == mi:
+				_hover_heal_idx = -1)
 		var v := VBoxContainer.new()
 		v.add_theme_constant_override("separation", 1)
 		p.add_child(v)
@@ -324,6 +404,85 @@ func popup(text: String, screen_pos: Vector2, color: Color = UILib.COL_GOLD) -> 
 	tw.parallel().tween_property(l, "modulate:a", 0.0, 0.8).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 	tw.tween_callback(l.queue_free)
 
+func fly_xp(from: Vector2, count: int = 3) -> void:
+	# 경험치 파랑 입자 — 상단 정보창의 XP바로 빨려든다 (v3.1 §B-1)
+	if not Game.ui_unlocked["gold"]:
+		return
+	count = clampi(count, 1, 5)
+	for i in count:
+		var d := ColorRect.new()
+		d.color = Color(0.45, 0.7, 1.0)
+		d.size = Vector2(2, 2)
+		d.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		d.position = from + Vector2(randf_range(-10, 10), randf_range(-8, 8))
+		_fx_root.add_child(d)
+		var tw := create_tween()
+		tw.tween_interval(i * 0.05)
+		tw.tween_property(d, "position", Vector2(40, 24), 0.5).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+		tw.tween_callback(d.queue_free)
+
+func levelup_ritual(new_level: int) -> void:
+	# 레벨업 의식 — 전화면 플래시 + 팡파레 + 게이트 힌트 (v3.1 §B-1)
+	Sfx.play("fanfare")
+	var flash := ColorRect.new()
+	flash.color = Color(1, 1, 1, 0.55)
+	flash.set_anchors_preset(Control.PRESET_FULL_RECT)
+	flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_overlay_root.add_child(flash)
+	var tw := create_tween()
+	tw.tween_property(flash, "color:a", 0.0, 0.5)
+	tw.tween_callback(flash.queue_free)
+	var msg := "레벨 %d(이)가 되었다!" % new_level
+	var hint := _level_gate_hint(new_level)
+	if hint != "":
+		msg += "  " + hint
+	event(msg, 4.0)
+
+func _level_gate_hint(lv: int) -> String:
+	# 다음 레벨 게이트가 뭘 여는지 슬쩍 알려준다 — 레벨업이 '열쇠'라는 감각
+	if lv == 2:
+		return "촌장이 게시판 이야기를 꺼낼 것 같다."
+	if lv == 3 and not Game.residents.get("smithy", false):
+		return "대장장이가 흥미를 보인다."
+	if lv == 5 and Game.up["intuition"] == 0:
+		return "촌장이 「직감」 이야기를 한다."
+	if lv == 6 and not Game.residents.get("gambler", false):
+		return "어디선가 주사위 소리가 들린다."
+	if lv == 8:
+		return "큰돈의 냄새를 맡은 자가 있다던데."
+	if lv == 10 and Game.sword_rock == 1:
+		return "…바위의 검이 응답할 것 같다."
+	return ""
+
+func show_cutin(text: String, tex_path: String, fallback: String, tint: Color) -> void:
+	# 합체기 컷인 — 검은 띠 + 초상 + 기술명이 화면을 가로지른다 (v3.1 §B-4)
+	var band := ColorRect.new()
+	band.color = Color(0, 0, 0, 0.85)
+	band.position = Vector2(0, 130)
+	band.size = Vector2(640, 84)
+	band.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_overlay_root.add_child(band)
+	var tex: Texture2D = load(tex_path) if ResourceLoader.exists(tex_path) else load(fallback)
+	var tr := TextureRect.new()
+	tr.texture = tex
+	tr.modulate = tint if not ResourceLoader.exists(tex_path) else Color(1, 1, 1)
+	tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	tr.custom_minimum_size = Vector2(64, 64)
+	tr.size = Vector2(64, 64)
+	tr.position = Vector2(-80, 10)
+	band.add_child(tr)
+	var l := UILib.make_label(text, UILib.FS, UILib.COL_GOLD)
+	l.position = Vector2(700, 28)
+	band.add_child(l)
+	Sfx.play("fanfare_big")
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(tr, "position:x", 120.0, 0.25).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tw.tween_property(l, "position:x", 220.0, 0.25).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tw.chain().tween_interval(1.1)
+	tw.chain().tween_property(band, "modulate:a", 0.0, 0.3)
+	tw.chain().tween_callback(band.queue_free)
+
 func fade_quick(mid_callback: Callable) -> void:
 	# 룸 전환용 짧은 페이드 (0.3초대)
 	var r := ColorRect.new()
@@ -369,28 +528,51 @@ func is_menu_open() -> bool:
 func close_menu() -> void:
 	_menu_kind = ""
 	menu_hover = ""
+	remote_open = false
+	_menu_sc = null
+	_menu_v = null
 	for c in _menu_root.get_children():
 		c.queue_free()
 
 func _menu_panel(title: String) -> VBoxContainer:
+	# close_menu()가 _menu_kind/remote_open을 지우므로, 호출자가 미리 정한 값을 살려 둔다
+	# (이게 안 되면 _up_row의 reopen·카지노 스핀 가드·텔레파시 잠금이 전부 오작동한다)
+	var kind := _menu_kind
+	var remote := remote_open
 	close_menu()
+	_menu_kind = kind
+	remote_open = remote
 	var p := UILib.make_panel(UILib.COL_GOLD)
-	p.position = Vector2(160, 14)
+	p.position = Vector2(160, 8)
 	p.custom_minimum_size = Vector2(320, 0)
 	p.mouse_filter = Control.MOUSE_FILTER_STOP
 	_menu_root.add_child(p)
-	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", 1)
-	p.add_child(v)
+	var outer := VBoxContainer.new()
+	outer.add_theme_constant_override("separation", 1)
+	p.add_child(outer)
 	var head := HBoxContainer.new()
-	v.add_child(head)
+	outer.add_child(head)
 	var t := UILib.make_label(title, UILib.FS, UILib.COL_GOLD)
 	t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(t)
 	var x := UILib.make_button("닫기", UILib.FS)
 	x.pressed.connect(close_menu)
 	head.add_child(x)
+	# 긴 메뉴는 스크롤 — 화면(360px)을 뚫고 나가지 않게 (v3.1: 촌장 메뉴가 길어졌다)
+	var sc := ScrollContainer.new()
+	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	sc.custom_minimum_size = Vector2(312, 0)
+	outer.add_child(sc)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 1)
+	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sc.add_child(v)
+	_menu_sc = sc
+	_menu_v = v
 	return v
+
+var _menu_sc: ScrollContainer = null
+var _menu_v: VBoxContainer = null
 
 func _menu_row(v: VBoxContainer, left: String, sub: String, btn_text: String, enabled: bool, on_press: Callable) -> void:
 	# 한 줄 레이아웃 — 설명(sub)은 호버 시 하단 설명창에 흐른다
@@ -431,6 +613,18 @@ func open_chief() -> void:
 				func(): _chief_pay(r["id"]))
 		else:
 			_menu_row(v, String(r["name"]), String(r["ask"]), cond_txt, false, func(): pass)
+	# 동료 부탁 — 객원들이 촌장을 통해 손을 내민다 (v3.1)
+	var asks: Array = main.candidate_asks()
+	if not asks.is_empty():
+		v.add_child(UILib.make_label("— 동행을 원하는 자들 —", UILib.FS, UILib.COL_GOLD))
+		for a in asks:
+			var cd: Dictionary = Game.COMPANIONS[a["id"]]
+			var lv_ok2: bool = int(a["lv"]) == 0 or Game.level >= int(a["lv"])
+			var cost2: int = Game.price(int(a["gold"]))
+			_menu_row(v, String(cd["name"]) + " (객원)", String(a["ask"]),
+				"%d G" % cost2 if lv_ok2 else "Lv%d 필요" % int(a["lv"]),
+				lv_ok2 and Game.gold >= cost2,
+				func(): _chief_pay_companion(String(a["id"])))
 	# 건설 — 게시판·항아리 (의식과 살림)
 	v.add_child(UILib.make_label("— 건설 —", UILib.FS, UILib.COL_GOLD))
 	if not Game.buildings["board"]:
@@ -452,11 +646,15 @@ func open_chief() -> void:
 	_up_row(v, "intuition", "용사의 직감", "파티가 스스로 사냥하고 돌아온다", 800, 1.0, 1, 5)
 	if Game.up["intuition"] > 0:
 		_up_row(v, "radius", "행동반경", "직감 사냥 반경 +80", 200, 2.0, 3, 0)
+	# v3.1 — 지휘 계열
+	_up_row(v, "flee", "퇴각 나팔", "주시 중인 전투창에서 도망칠 수 있다", 300, 1.0, 1, 3)
+	if Game.up["intuition"] > 0:
+		_up_row(v, "telepathy", "상인의 텔레파시", "멀리서도 건물 메뉴를 열 수 있다 (몸 행위는 불가)", 500, 1.0, 1, 0)
 
 func _up_row(v: VBoxContainer, id: String, name_txt: String, desc: String, base: int, growth: float, max_lv: int, lv_gate: int) -> void:
 	var lv: int = Game.up[id]
 	var maxed: bool = lv >= max_lv
-	var cost := int(base * pow(growth, lv))
+	var cost := Game.price(int(base * pow(growth, lv)))
 	var label := name_txt + (" Lv%d" % lv if max_lv > 1 else "")
 	var gated: bool = Game.level < lv_gate
 	var btn := "완료" if maxed else ("Lv%d 필요" % lv_gate if gated else "%d G" % cost)
@@ -474,10 +672,18 @@ func _buy_up(id: String, cost: int, reopen: String) -> void:
 	match reopen:
 		"inn": open_inn()
 		"shop": open_shop_menu()
+		"church": open_church()
+		"bank": open_bank()
 		_: open_chief()
 
 func _chief_pay(id: String) -> void:
 	if main.try_pay_resident(id):
+		close_menu()
+	else:
+		open_chief()
+
+func _chief_pay_companion(id: String) -> void:
+	if main.try_pay_companion(id):
 		close_menu()
 	else:
 		open_chief()
@@ -502,8 +708,57 @@ func open_inn() -> void:
 	_menu_kind = "inn"
 	var v := _menu_panel("여관 — \"어서 오세요\"")
 	var need: bool = Game.lowest_hp_ratio() < 1.0 or Game.ghost_count() > 0
-	_menu_row(v, "쉬어간다", "일행의 HP를 전부 회복한다", "무료", need, _inn_rest)
-	_up_row(v, "max_hp", "침구 개선", "전원 최대 HP +6", 30, 1.2, 9, 0)
+	_menu_row(v, "쉬어간다", "일행의 HP를 전부 회복한다 (직접 와야 한다)", "무료" if not remote_open else "몸으로",
+		need and not remote_open, _inn_rest)
+	_up_row(v, "max_hp", "침구 개선", "전원 최대 HP +8%", 30, 1.2, 9, 0)
+	# 편성 (v3.1 §B-3 — 여관 로비가 대기소)
+	if Game.companion_count() > 1:
+		_menu_row(v, "파티 편성 (%d/%d)" % [Game.party_ids.size(), Game.PARTY_MAX],
+			"누구와 걸을지 정한다. 편성이 곧 전략이다", "열기", true, open_formation)
+	_menu_row(v, "《동료들의 서》", "만난 동료들의 기록 — 회차를 넘어 남는다", "펼치기", true, open_book)
+
+func open_formation() -> void:
+	_menu_kind = "formation"
+	var v := _menu_panel("파티 편성 — 최대 %d명" % Game.PARTY_MAX)
+	for id in Game.COMPANIONS.keys():
+		if not Game.companions_owned.get(id, false):
+			continue
+		var d: Dictionary = Game.COMPANIONS[id]
+		var in_party: bool = Game.party_ids.has(id)
+		var tag: String = "정규" if d["regular"] else "객원"
+		if id == "hero":
+			_menu_row(v, "★ %s (%s)" % [d["name"], tag], String(d["pdesc"]), "고정", false, func(): pass)
+		else:
+			_menu_row(v, ("★ " if in_party else "・ ") + "%s (%s)" % [d["name"], tag], String(d["pdesc"]),
+				"빼기" if in_party else "넣기",
+				in_party or Game.party_ids.size() < Game.PARTY_MAX,
+				func(): _formation_toggle(id))
+	var combo: Dictionary = Game.active_combo()
+	if not combo.is_empty():
+		var hint_txt := "…이 편성, 뭔가 통하는 게 있다."
+		if Game.combo_hint_known:
+			hint_txt += " (%s)" % String(combo["name"])
+		v.add_child(UILib.make_label(hint_txt, UILib.FS, UILib.COL_GOLD))
+
+func _formation_toggle(id: String) -> void:
+	if Game.toggle_party(id):
+		Sfx.play("click")
+		Game.save_game()
+		open_formation()
+	else:
+		Sfx.play("deny")
+		event("자리가 없다! (최대 %d명)" % Game.PARTY_MAX)
+
+func open_book() -> void:
+	_menu_kind = "book"
+	var v := _menu_panel("《동료들의 서》 — %d/%d" % [Game.book_seen.size(), Game.COMPANIONS.size()])
+	for id in Game.COMPANIONS.keys():
+		var d: Dictionary = Game.COMPANIONS[id]
+		if Game.book_seen.get(id, false):
+			var tag: String = "정규" if d["regular"] else "객원"
+			_menu_row(v, "%s (%s)" % [d["name"], tag], String(d["pdesc"]), "기록됨", false, func(): pass)
+		else:
+			_menu_row(v, "？？？", String(d["hint"]), "—", false, func(): pass)
 
 func _inn_rest() -> void:
 	Sfx.play("heal")
@@ -521,6 +776,14 @@ func open_church() -> void:
 	var cost := Game.revive_cost()
 	_menu_row(v, "유령을 되살린다 (%d명)" % ghosts, "빛이 일행을 감싸안는다", "%d G" % cost if ghosts > 0 else "—",
 		ghosts > 0 and Game.gold >= cost, _church_revive)
+	# 축복 — 주시(호버)의 힘을 벼리는 곳 (v3.1 §B-7)
+	v.add_child(UILib.make_label("— 축복 (주시의 힘) —", UILib.FS, UILib.COL_GOLD))
+	_up_row(v, "gaze", "주시 강화", "지켜보는 창의 가속·회심이 강해진다", 120, 1.6, 5, 0)
+	_up_row(v, "heal_eye", "치유의 눈길", "파티창을 바라보면 성수가 상처를 씻는다", 150, 1.8, 4, 0)
+	_up_row(v, "golden_hands", "황금의 손길", "황금 슬라임을 문질러 붙잡을 수 있게 된다", 200, 1.0, 1, 0)
+	if Game.up["heal_eye"] > 0 or Game.up["golden_hands"] > 0:
+		_up_row(v, "holy_max", "성수 그릇", "성수 최대치 +4초", 100, 1.7, 4, 0)
+		_up_row(v, "holy_regen", "샘의 축복", "성수가 차오르는 속도 +35%", 130, 1.7, 4, 0)
 	_menu_row(v, "모험의 서에 기록한다", "다음 회차로 — 훈장·서사시는 남는다",
 		"기록" if Game.bosses_defeated[4] or Game.ending_seen else "마왕 처치 후",
 		Game.bosses_defeated[4] or Game.ending_seen,
@@ -548,7 +811,7 @@ func open_shop_menu() -> void:
 func _assist_row(v: VBoxContainer, id: String, name_txt: String, desc: String, base: int, growth: float, max_n: int) -> void:
 	var n: int = Game.assistants[id]
 	var maxed: bool = n >= max_n
-	var cost := int(base * pow(growth, n))
+	var cost := Game.price(int(base * pow(growth, n)))
 	_menu_row(v, "%s %d/%d" % [name_txt, n, max_n], desc, "완료" if maxed else "%d G" % cost,
 		not maxed and Game.gold >= cost, func(): _buy_assist(id, cost))
 
@@ -628,11 +891,12 @@ func open_smith() -> void:
 	for i in Game.members.size():
 		var m: Dictionary = Game.members[i]
 		if m["cls"] == "hero":
-			_menu_row(v, Game.weapon_name(i), "전설의 검은 돈으로 벼릴 수 없다 (음유시인에게)", "—", false, func(): pass)
+			_menu_row(v, Game.weapon_name(i), "전설의 검은 돈으로 벼릴 수 없다 — 이야기와 바위가 벼린다", "—", false, func(): pass)
 			continue
 		var cost := Game.weapon_cost(i)
-		_menu_row(v, Game.weapon_name(i), "리듬에 맞춰 두들긴다 — 판정에 따라 +1/+2/+3", "%d G" % cost,
-			Game.gold >= cost, func(): _start_forge(i, cost))
+		_menu_row(v, "%s — %s" % [String(m["name"]), Game.weapon_name(i)],
+			"리듬에 맞춰 두들긴다 — 판정에 따라 +1/+2/+3 (직접 와야 한다)", "%d G" % cost,
+			Game.gold >= cost and not remote_open, func(): _start_forge(i, cost))
 
 func _start_forge(i: int, cost: int) -> void:
 	if not Game.try_spend(cost):
@@ -652,8 +916,9 @@ func _start_forge(i: int, cost: int) -> void:
 		_apply_forge(i, result))
 
 func _apply_forge(i: int, result: int) -> void:
-	Game.members[i]["weapon_lv"] += result
-	var lv: int = Game.members[i]["weapon_lv"]
+	var lv: int = int(Game.members[i]["weapon_lv"]) + result
+	# 편성에서 빠졌다 돌아와도 무기는 기억된다 (v3.1)
+	Game.set_weapon_lv(String(Game.members[i]["cls"]), lv)
 	if result >= 3:
 		Sfx.play("fanfare_big")
 		event("회심의 필살작!! %s" % Game.weapon_name(i), 3.5)
@@ -734,6 +999,38 @@ func _buy_golden_info(cost: int) -> void:
 	event("금색으로 빛나는 것을 봤다는 소문이다…", 3.0)
 	open_board()
 
+# ---------------------------------------------------------------- 은행 (v3.1 §B-8)
+
+func open_bank() -> void:
+	_menu_kind = "bank"
+	var v := _menu_panel("은행 — \"돈이 돈을 법니다\"")
+	v.add_child(UILib.make_label("예금: %d G / 한도 %d G" % [Game.deposit, Game.bank_cap()], UILib.FS, UILib.COL_GOLD))
+	v.add_child(UILib.make_label("예금은 전멸해도 빼앗기지 않는다", UILib.FS, UILib.COL_GRAY))
+	var body_note := " (직접 와야 한다)" if remote_open else ""
+	var half: int = maxi(1, int(Game.gold / 2.0))
+	_menu_row(v, "절반을 맡긴다%s" % body_note, "지금 골드의 절반을 예금한다", "%d G" % half,
+		Game.gold > 0 and Game.deposit < Game.bank_cap() and not remote_open,
+		func(): _bank_do(half, true))
+	_menu_row(v, "전부 맡긴다%s" % body_note, "지금 골드를 몽땅 예금한다", "%d G" % Game.gold,
+		Game.gold > 0 and Game.deposit < Game.bank_cap() and not remote_open,
+		func(): _bank_do(Game.gold, true))
+	_menu_row(v, "전부 찾는다%s" % body_note, "예금을 몽땅 인출한다", "%d G" % Game.deposit,
+		Game.deposit > 0 and not remote_open,
+		func(): _bank_do(Game.deposit, false))
+	v.add_child(UILib.make_label("— 창구 확장 —", UILib.FS, UILib.COL_GOLD))
+	_up_row(v, "bank_cap", "금고 확장", "예금 한도 ×2.5", 400, 2.4, 5, 0)
+	_up_row(v, "bank_rate", "우대 금리", "이자율 상승 (30초마다 이자)", 500, 2.2, 4, 0)
+
+func _bank_do(amount: int, deposit_mode: bool) -> void:
+	var moved: int = Game.bank_deposit(amount) if deposit_mode else Game.bank_withdraw(amount)
+	if moved <= 0:
+		Sfx.play("deny")
+		return
+	Sfx.play("coin")
+	event("%s %d G — 「감사합니다」" % ["예금" if deposit_mode else "인출", moved], 2.5)
+	Game.save_game()
+	open_bank()
+
 # ---------------------------------------------------------------- 카지노
 
 const SLOT_SYMBOLS := ["slime", "pot", "bat", "gold"]
@@ -787,7 +1084,7 @@ func open_casino() -> void:
 	var result_l := UILib.make_label("슬롯: 같은 그림 3개를 노려라", UILib.FS, UILib.COL_GRAY)
 	v.add_child(result_l)
 	_casino_refs["result"] = result_l
-	_menu_row(v, "슬롯을 돌린다", "같은 그림 3개 = 대박, 2개 = 본전", "1 코인", true, _casino_spin)
+	_menu_row(v, "슬롯을 돌린다", "같은 그림 3개 = 대박, 2개 = 본전 (직접 와야 한다)", "1 코인", not remote_open, _casino_spin)
 	# 교환소
 	v.add_child(UILib.make_label("— 교환소 —", UILib.FS, UILib.COL_GOLD))
 	if Game.casino_wincap == 0:
@@ -903,7 +1200,7 @@ func open_bard() -> void:
 				func(): _show_verse(i))
 		elif i == Game.epic_verses:
 			var cost: int = Game.EPIC_COSTS[i]
-			_menu_row(v, "제 %d절 — 미지의 이야기" % (i + 1), "전설의 검은 이야기를 먹고 자란다", "%d G" % cost,
+			_menu_row(v, "제 %d절 — 미지의 이야기" % (i + 1), "절이 열릴 때마다 세계에 무언가가 일어난다", "%d G" % cost,
 				Game.gold >= cost, func(): _buy_verse(i))
 		else:
 			_menu_row(v, "제 %d절 — ⋯" % (i + 1), "", "—", false, func(): pass)
@@ -917,10 +1214,11 @@ func _buy_verse(i: int) -> void:
 	Sfx.play("fanfare_big")
 	Game.save_game()
 	_show_verse(i)
+	# v3.1 — 절은 사건을 판다: 세계가 실제로 변한다
+	if main != null:
+		main.on_verse_bought(i)
 	if Game.epic_complete():
 		event("서사시가 완성되었다. …북쪽이 부른다.", 5.0)
-	else:
-		event("용사의 검이 희미하게 빛난다… (%s)" % Game.weapon_name(0), 3.5)
 
 func _show_verse(i: int) -> void:
 	close_menu()

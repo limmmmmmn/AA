@@ -4,10 +4,14 @@ extends Control
 ## 드퀘다움: 이중 테두리 / 타자기 텍스트+블립음+▼ / 펼침 등장 / 몬스터 중앙 크게
 
 signal golden_hover_changed(hovering: bool)
+signal flee_requested
 
 var sim: BattleSim
 var is_boss := false
 var closing := false
+var _linger_t := 0.0        # 바드의 여운 — 커서를 떼도 주시가 잔류
+var _dust_t := 0.0          # 주시 금가루 파티클 타이머
+var _flee_btn: Button = null
 
 var _enemy_nodes: Array = []          # TextureRect
 var _enemy_tex_sizes: Array = []      # 원본 텍스처 크기 (재배율용)
@@ -41,6 +45,7 @@ func setup(p_sim: BattleSim, p_size: Vector2, boss: bool) -> void:
 	sim.golden_escaped.connect(_on_golden_escaped)
 	sim.golden_captured.connect(_on_golden_captured)
 	sim.victory.connect(_on_victory)
+	sim.frogified.connect(_on_frogified)
 	mouse_entered.connect(_on_mouse_entered)
 	mouse_exited.connect(_on_mouse_exited)
 
@@ -138,6 +143,8 @@ func apply_dock(pos: Vector2, sz: Vector2) -> void:
 		_layout_enemies()
 		if _golden != null and is_instance_valid(_golden):
 			_golden.position = _golden.position.clamp(Vector2(4, 4), size - _golden.size - Vector2(4, 4))
+		if _flee_btn != null and is_instance_valid(_flee_btn):
+			_flee_btn.position = Vector2(size.x - 40, 4)
 		queue_redraw()
 	var tw := create_tween()
 	tw.tween_property(self, "position", pos, 0.2).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
@@ -152,6 +159,18 @@ func _process(delta: float) -> void:
 	queue_redraw()
 	if _flash > 0.0:
 		_flash -= delta
+	# 바드의 여운 — 커서가 떠나도 주시가 잠시 남는다
+	if _linger_t > 0.0:
+		_linger_t -= delta
+		if _linger_t <= 0.0 and sim != null and not get_global_rect().has_point(get_global_mouse_position()):
+			sim.hovered = false
+			_update_flee_btn()
+	# 주시 금가루 — 지켜보는 창에서 반짝임이 피어오른다 (v3.1 §B-7-1)
+	if sim != null and sim.hovered:
+		_dust_t -= delta
+		if _dust_t <= 0.0:
+			_dust_t = 0.22
+			_spawn_gaze_dust()
 	if _golden != null and is_instance_valid(_golden) and sim.golden_active:
 		_wiggle_t += delta * (6.0 + sim.golden_gauge * 14.0)
 		_golden.position.x += sin(_wiggle_t) * 0.6
@@ -215,7 +234,9 @@ func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, size), UILib.COL_BG, true)
 	var border := UILib.COL_WHITE
 	if sim != null and sim.hovered:
-		border = UILib.COL_GOLD
+		# 주시 중 — 금색 테두리가 숨쉬듯 맥동한다 (v3.1 §B-7-1)
+		var pulse := 0.75 + 0.25 * sin(_t * 5.0)
+		border = Color(UILib.COL_GOLD.r * pulse + 0.2, UILib.COL_GOLD.g * pulse + 0.2, UILib.COL_GOLD.b * pulse * 0.5)
 	if _flash > 0.0:
 		border = UILib.COL_GOLD if int(_flash * 12.0) % 2 == 0 else UILib.COL_WHITE
 	# 굵은 외곽선(2px) + 1px 간격 + 얇은 안쪽 선 — 드퀘 정품 문법
@@ -289,15 +310,64 @@ func _on_victory(_gold: int, _exp: int) -> void:
 func _on_mouse_entered() -> void:
 	if sim != null:
 		sim.hovered = true
+	_linger_t = 0.0
+	Sfx.gaze_loop(true)
+	_update_flee_btn()
 	queue_redraw()
 
 func _on_mouse_exited() -> void:
 	if sim != null:
-		sim.hovered = false
+		if Game.passive_on("linger"):
+			_linger_t = 2.5  # 바드의 여운
+		else:
+			sim.hovered = false
+	Sfx.gaze_loop(false)
+	_update_flee_btn()
 	if _golden_hovering:
 		_golden_hovering = false
 		golden_hover_changed.emit(false)
 	queue_redraw()
+
+func _spawn_gaze_dust() -> void:
+	# 창 안 아무 데서나 금가루가 떠오른다
+	var d := ColorRect.new()
+	d.color = Color(1.0, 0.85, 0.3, 0.9)
+	d.size = Vector2(2, 2)
+	d.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	d.position = Vector2(randf_range(8, size.x - 10), randf_range(size.y * 0.4, size.y - 46))
+	d.z_index = 3
+	add_child(d)
+	var tw := create_tween()
+	tw.tween_property(d, "position:y", d.position.y - randf_range(10, 20), 0.7)
+	tw.parallel().tween_property(d, "modulate:a", 0.0, 0.7)
+	tw.tween_callback(d.queue_free)
+
+func _update_flee_btn() -> void:
+	# 도망 버튼 — 퇴각 나팔 해금 후, 주시 중인 창 구석에만 (v3.1 §B-7-6)
+	var want: bool = sim != null and sim.hovered and not closing and Game.up["flee"] > 0 and not is_boss
+	if want and _flee_btn == null:
+		_flee_btn = UILib.make_button("도망", UILib.FS)
+		_flee_btn.position = Vector2(size.x - 40, 4)
+		_flee_btn.z_index = 6
+		_flee_btn.pressed.connect(func():
+			Sfx.play("flee")
+			flee_requested.emit())
+		add_child(_flee_btn)
+	elif not want and _flee_btn != null:
+		if is_instance_valid(_flee_btn):
+			_flee_btn.queue_free()
+		_flee_btn = null
+
+func _on_frogified() -> void:
+	# 개구리의 왈츠 — 몬스터들이 초록으로 물들어 꿈틀거린다
+	Sfx.play("squish", 0.7)
+	for tr in _enemy_nodes:
+		if is_instance_valid(tr):
+			tr.modulate = Color(0.5, 1.3, 0.5)
+			var tw := create_tween()
+			tw.set_loops(4)
+			tw.tween_property(tr, "scale", Vector2(1.15, 0.85), 0.12)
+			tw.tween_property(tr, "scale", Vector2.ONE, 0.12)
 
 # ---------------------------------------------------------------- 황금 슬라임
 
@@ -321,13 +391,16 @@ func _gui_input(event: InputEvent) -> void:
 		var rect := Rect2(_golden.position - Vector2(6, 6), _golden.size + Vector2(12, 12))
 		if rect.has_point(event.position):
 			sim.rub_golden(event.relative.length() / 300.0)
+			accept_event()
+			# rub_golden으로 포획이 완성되면 _on_golden_captured가 _golden을 null로 만든다
+			if _golden == null or not is_instance_valid(_golden):
+				return
 			if _squish_cd <= 0.0:
 				_squish_cd = 0.1
 				Sfx.play("squish", 0.9 + sim.golden_gauge * 0.9)
 				var tw := create_tween()
 				_golden.scale = Vector2(1.25, 0.75)
 				tw.tween_property(_golden, "scale", Vector2.ONE, 0.12)
-			accept_event()
 
 func _on_golden_escaped() -> void:
 	Sfx.play("flee")
@@ -359,6 +432,8 @@ func close_after(delay: float) -> void:
 	if closing:
 		return
 	closing = true
+	if sim != null and sim.hovered:
+		Sfx.gaze_loop(false)
 	var tw := create_tween()
 	tw.tween_interval(delay)
 	tw.tween_property(self, "scale", Vector2(0.85, 0.85), 0.12)

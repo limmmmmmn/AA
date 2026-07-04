@@ -20,10 +20,12 @@ var _ai_wait := 0.0
 
 var _history: Array[Vector2] = []
 var _sprites: Array = []           # 멤버 인덱스 순 Sprite2D
+var _charm_sprites: Array = []     # 매혹된 몬스터 (장식 추종자)
 var _anim_t := 0.0
 var _dir_row := 0                  # 0 아래 1 왼쪽 2 오른쪽 3 위
 var _moving := false
 var _bob_t := 0.0
+var combo_glow := false            # 합체기 준비 완료 — 파티 발광
 
 func _ready() -> void:
 	Game.party_changed.connect(_rebuild_sprites)
@@ -57,6 +59,27 @@ func _rebuild_sprites() -> void:
 		s.offset = Vector2(0, -float(d["frame_h"]) / 2.0)
 		add_child(s)
 		_sprites.append(s)
+	_rebuild_charmed()
+
+func _rebuild_charmed() -> void:
+	# 매혹된 몬스터 — 대열 꽁무니를 따라오는 장식 (v3.1 드루이드/서사시)
+	for c in _charm_sprites:
+		if is_instance_valid(c):
+			c.queue_free()
+	_charm_sprites = []
+	for mid in Game.charmed:
+		var def := {}
+		for md in Game.MONSTER_DEFS:
+			if md["id"] == mid:
+				def = md
+				break
+		if def.is_empty():
+			continue
+		var s := Sprite2D.new()
+		s.texture = load(def["tex"])
+		s.modulate = Color(1.0, 0.85, 1.0)  # 홀린 기색
+		add_child(s)
+		_charm_sprites.append(s)
 
 # ---------------------------------------------------------------- 이동
 
@@ -178,8 +201,25 @@ func _layout_sprites() -> void:
 			s.position.y -= 3.0 + sin(_bob_t + slot) * 2.0
 			s.frame_coords = Vector2i(1, _dir_row)
 		else:
-			s.modulate = Color(1, 1, 1, 1)
+			var tint: Color = Game.COMPANIONS[Game.members[idx]["cls"]].get("tint", Color(1, 1, 1))
+			if combo_glow:
+				# 합체기 준비 완료 — 온몸이 은은하게 빛난다
+				var g := 1.0 + 0.35 * (0.5 + 0.5 * sin(_bob_t * 2.5))
+				tint = Color(tint.r * g, tint.g * g, tint.b * g)
+			s.modulate = tint
 			s.frame_coords = Vector2i(frame_col, _dir_row)
+	# 매혹된 몬스터는 대열 맨 뒤에서 통통
+	for ci in _charm_sprites.size():
+		var cs: Sprite2D = _charm_sprites[ci]
+		if not is_instance_valid(cs):
+			continue
+		var hist_c: int = mini((order.size() + ci) * SPACING, _history.size() - 1)
+		cs.position = _history[hist_c] if hist_c >= 0 else head_pos
+		cs.position.y -= absf(sin(_bob_t * 1.5 + ci)) * 3.0
+		cs.z_index = 0
+
+func refresh_charmed() -> void:
+	_rebuild_charmed()
 
 func leader_pos() -> Vector2:
 	return head_pos
