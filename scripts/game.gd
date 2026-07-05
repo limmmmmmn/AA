@@ -107,24 +107,40 @@ const COMPANIONS := {
 		"pdesc": "한 끼 — 성수가 훨씬 잘 차오른다", "hint": "여관 주인이 곧 동료"},
 	"banker":   {"name": "은행원",   "regular": false, "passive": "interest", "atk": 2, "hp": 22, "crit": 0.05, "aggro": 0.8, "tex": "res://assets/NPCs/village_chief.png", "frame_h": 26, "tint": Color(0.85, 0.9, 1.0),
 		"pdesc": "이자 감각 — 편성 중 필드 골드 +10%. 영입하면 은행이 선다", "hint": "큰돈의 냄새를 맡고 온다"},
+	"weaponer": {"name": "무기상",   "regular": false, "passive": "appraise", "atk": 4, "hp": 26, "crit": 0.05, "aggro": 0.9, "tex": "res://assets/NPCs/village_chief.png", "frame_h": 26, "tint": Color(0.75, 0.8, 0.9),
+		"pdesc": "감정안 — 무기점 강화 15% 할인", "hint": "무기점 주민이 곧 동료"},  # v3.4 로스터 19
 }
 const CLASS_DEFS := COMPANIONS  # 하위 호환 별칭
 const PARTY_MAX := 5
 
-## 합체기 3종 (v3.1 §B-4 — 딱 3종 동결). needs = 편성 조건 id, ghost = 유령 필요
+## 합체기 3종 (v3.4 §B-14 재편 — 참치=고전 4인 파티의 부조리, 어부 형제는 수중 담당으로 해방)
+## needs = 편성 조건 id, ghost = 유령 필요. 부분집합 조합이 있으므로 구체적인 것(참치)부터 판정
 const COMBO_DEFS := [
-	{"id": "tuna", "name": "참치 어택", "needs": ["fisher_a", "fisher_b"], "ghost": false,
-		"cutin": "어부 형제의 힘이 하나가 되었다!\n참치 어택!!", "tex": "res://assets/combined/tuna.png", "fallback": "res://assets/enemies/slime_fly.png", "tint": Color(0.5, 0.7, 1.3)},
+	{"id": "tuna", "name": "참치 어택", "needs": ["hero", "priest", "mage", "thief"], "ghost": false,
+		"cutin": "전설의 조합이 완성되었다!\n…참치다.", "tex": "res://assets/combined/tuna.png", "fallback": "res://assets/enemies/slime_fly.png", "tint": Color(0.5, 0.7, 1.3)},
 	{"id": "frog", "name": "개구리의 왈츠", "needs": ["druid", "bardc"], "ghost": false,
 		"cutin": "드루이드와 바드의 선율이 겹쳐진다!\n개구리의 왈츠!", "tex": "res://assets/combined/frog.png", "fallback": "res://assets/enemies/slime.png", "tint": Color(0.5, 1.3, 0.5)},
-	{"id": "skeleton", "name": "명계의 행진", "needs": ["priest"], "ghost": true,
-		"cutin": "사제의 기도가 저승에 닿았다!\n명계의 행진!!", "tex": "res://assets/combined/skeleton.png", "fallback": "res://assets/enemies/bat.png", "tint": Color(1.2, 1.2, 1.25)},
+	{"id": "skeleton", "name": "명계의 행진", "needs": ["hero", "mage"], "ghost": false,
+		"cutin": "용사와 마법사의 주문이 겹쳐진다!\n명계의 행진!!", "tex": "res://assets/combined/skeleton.png", "fallback": "res://assets/enemies/bat.png", "tint": Color(1.2, 1.2, 1.25)},
 ]
 
 var members: Array = []              # 편성된 파티의 런타임 [{cls, name, hp, max_hp, ghost, weapon_lv}]
 var companions_owned := {"hero": true}
 var party_ids: Array = ["hero"]      # 현재 편성 (여관에서 교체, 최대 5)
-var companion_weapons := {}          # id → 무기 레벨 (정규만)
+var companion_weapons := {}          # id → 무기 레벨 (무기점 플랫, 정규만)
+var companion_forge := {}            # id → 벼림 포인트 (대장간 % 배율, v3.4 §B-5)
+var new_flags: Array = []            # NEW 뱃지 대기열 — 도감 열람 시 해제 (v3.4 §B-10)
+
+func mark_new(id: String) -> void:
+	if not new_flags.has(id):
+		new_flags.append(id)
+
+func is_new(id: String) -> bool:
+	return new_flags.has(id)
+
+func clear_new(ids: Array) -> void:
+	for id in ids:
+		new_flags.erase(id)
 var book_seen := {"hero": true}      # 동료들의 서 — 회차 넘어 영구 기록
 var combo_gauge := 0.0               # 합체기 게이지 0..1
 var combo_hint_known := false        # 서사시로 힌트 해금
@@ -229,6 +245,7 @@ var up := {
 	"holy_max": 0, "holy_regen": 0,
 	"flee": 0, "telepathy": 0,
 	"bank_cap": 0, "bank_rate": 0,
+	"lantern": 0, "stack": 0,  # v3.4: 밤 시야 등불 / 겹쳐보기 스택
 }
 
 # 성수 게이지 (v3.1 §B-7-4 — 수량제 아님, 자동 재생 리소스)
@@ -237,10 +254,10 @@ var holy := 12.0
 # 은행 (v3.1 §B-8 — 예금은 전멸에도 불가침)
 var deposit := 0
 
-# 진행 플래그 — v3.0 한 화면 월드
-var fields_unlocked: Array = [true, false, false, false, false]  # 초원/숲/동굴/설원/마왕성
-var bosses_defeated: Array = [false, false, false, false, false]
-var posters_f: Array = [0, 0, 0, 0, 0]  # 필드별 수배서 (마왕성 제외)
+# 진행 플래그 — v3.0 한 화면 월드 (+v3.4: 6번째 = 숨겨진 수중)
+var fields_unlocked: Array = [true, false, false, false, false, false]
+var bosses_defeated: Array = [false, false, false, false, false, false]
+var posters_f: Array = [0, 0, 0, 0, 0, 0]  # 필드별 수배서 (마왕성·수중 제외)
 var extra_pots := 0
 var buildings := {"inn": false, "board": false, "church": false, "smith": false, "chest": false, "casino": false, "bard": false, "medalking": false, "shop": false, "bank": false}
 var recruits_spawned := {"knight": false, "mage": false, "priest": false, "warrior": false, "monkf": false}
@@ -254,7 +271,7 @@ var residents := {}                  # id → true (영입됨). 주민 수 = 마
 var kill_counts := {}                # 몬스터 id → 처치 수 (부탁 퀘스트용)
 var medals_small := 0                # 작은 메달 (골드 교환 불가 수집품)
 var medals_spent := 0                # 메달왕에게 이미 교환한 누적치
-var keys := {"thief": false, "magic": false}   # 드퀘 열쇠
+var keys := {"thief": false, "magic": false, "sea": false}   # 드퀘 열쇠 (+바다의 노래)
 var opened := {"warehouse": false, "redchest": false}  # 잠긴 오브젝트
 var signpost_seen := false           # 이정표 등장 여부 (보스 1 처치 후)
 
@@ -376,16 +393,23 @@ const MONSTER_DEFS := [
 	{"id": "angry",  "name": "성난 슬라임", "hp": 26, "atk": 7,  "gold": 22, "exp": 11, "tex": "res://assets/enemies/slime_chaser.png", "scale": 1.0},
 	{"id": "cyclops","name": "외눈 괴수",   "hp": 44, "atk": 11, "gold": 45, "exp": 22, "tex": "res://assets/enemies/slime_fly.png",    "scale": 1.0},
 ]
-const FIELD_NAMES := ["초원", "숲", "동굴", "수중", "마왕성"]  # v3.2: 설원→수중 (설원은 회차 후보 폴더로)
-const BOSS_NAMES := ["초원의 지배자", "숲의 지배자", "동굴의 지배자", "수중의 지배자", "마왕"]
+# v3.4 §B-7: 메인 라인 = 초원→숲→동굴→설원→마왕성. 수중(5) = 숨겨진 필드 ("바다의 노래")
+const FIELD_NAMES := ["초원", "숲", "동굴", "설원", "마왕성", "수중"]
+const BOSS_NAMES := ["초원의 지배자", "숲의 지배자", "동굴의 지배자", "설원의 지배자", "마왕", "수중의 지배자"]
 const FIELD_TINTS := [
 	Color(1, 1, 1),                # 초원
 	Color(0.8, 1.05, 0.75),       # 숲
 	Color(0.85, 0.75, 1.0),       # 동굴
-	Color(0.55, 0.8, 1.25),       # 수중 — 물빛
+	Color(0.78, 0.9, 1.15),       # 설원
 	Color(0.72, 0.5, 0.85),       # 마왕성
+	Color(0.55, 0.8, 1.25),       # 수중 — 물빛 (숨겨진 필드)
 ]
-const FIELD_PREFIX := ["", "숲 ", "동굴 ", "물 ", "마 "]
+const FIELD_PREFIX := ["", "숲 ", "동굴 ", "얼음 ", "마 ", "물 "]
+const HIDDEN_FIELD := 5
+
+func field_tier(f: int) -> int:
+	# 수중은 T3.5~T4 동급 (v3.4 밸런스 노트) — 메인 라인은 index+1
+	return 4 if f == HIDDEN_FIELD else f + 1
 
 # 필드 티어(1~5) 기반 스케일
 func tier_stat(t: int) -> float:  return pow(2.6, t - 1)
@@ -456,7 +480,7 @@ func slot_meta(i: int) -> Dictionary:
 			stage += 1
 	return {
 		"exists": true,
-		"name": String(d.get("hero_name", "늦잠꾸러기")),
+		"name": String(d.get("hero_name", "용사")),
 		"level": int(d.get("level", 1)),
 		"playtime": float(d.get("playtime", 0.0)),
 		"revival": stage,
@@ -492,9 +516,9 @@ func reset_all() -> void:
 		up[k] = 0
 	for k in assistants.keys():
 		assistants[k] = 0
-	fields_unlocked = [true, false, false, false, false]
-	bosses_defeated = [false, false, false, false, false]
-	posters_f = [0, 0, 0, 0, 0]
+	fields_unlocked = [true, false, false, false, false, false]
+	bosses_defeated = [false, false, false, false, false, false]
+	posters_f = [0, 0, 0, 0, 0, 0]
 	extra_pots = 0
 	buildings = {"inn": false, "board": false, "church": false, "smith": false, "chest": false, "casino": false, "bard": false, "medalking": false, "shop": false, "bank": false}
 	recruits_spawned = {"knight": false, "mage": false, "priest": false, "warrior": false, "monkf": false}
@@ -506,7 +530,7 @@ func reset_all() -> void:
 	kill_counts = {}
 	medals_small = 0
 	medals_spent = 0
-	keys = {"thief": false, "magic": false}
+	keys = {"thief": false, "magic": false, "sea": false}
 	opened = {"warehouse": false, "redchest": false}
 	signpost_seen = false
 	ui_unlocked = {"desc": false, "gold": false, "party": false, "quest": false}
@@ -518,6 +542,8 @@ func reset_all() -> void:
 	companions_owned = {"hero": true}
 	party_ids = ["hero"]
 	companion_weapons = {}
+	companion_forge = {}
+	new_flags = []
 	book_seen = {"hero": true}
 	combo_gauge = 0.0
 	combo_hint_known = false
@@ -623,10 +649,19 @@ func companion_count() -> int:
 
 # ---------------------------------------------------------------- 스탯 공식
 
-func member_atk(idx: int) -> int:
+func member_atk_flat(idx: int) -> int:
+	# 플랫 = 무기점의 영역 (v3.4 §B-5 — 주 성장축)
 	var m: Dictionary = members[idx]
 	var base: int = COMPANIONS[m["cls"]]["atk"]
-	var atk := float(base + m["weapon_lv"] * 2 + int(level / 2.0))
+	return base + int(m["weapon_lv"]) * 2 + int(level / 2.0)
+
+func forge_mult(cls: String) -> float:
+	# 벼림 보정 = 대장간의 영역 (% 배율 — 플랫이 클수록 가치 상승)
+	return 1.0 + 0.03 * int(companion_forge.get(cls, 0))
+
+func member_atk(idx: int) -> int:
+	var m: Dictionary = members[idx]
+	var atk := float(member_atk_flat(idx)) * forge_mult(m["cls"])
 	if medal_on("ghost_warcry"):
 		atk *= 1.0 + 0.15 * ghost_count()
 	if medal_on("sharp_crest"):
@@ -733,7 +768,9 @@ func max_windows() -> int:
 	return clampi(n, 1, MAX_WINDOWS_HARD)
 
 func max_enemies_per_window() -> int:
-	return mini(1 + up["density"] + int(progress_tier() / 2.0), 5)
+	# v3.4 §B-3: 창내 최대 적 수 = 편성 인원 수 ("우리가 커지면 싸움도 커진다")
+	# 무리 유인 업글은 +1 보정으로만 존치
+	return mini(party_ids.size() + up["density"], 5)
 
 func mounted() -> bool:
 	# 탈것 (v3.2 §B-2) — 이속 트리의 끝은 수치가 아니라 존재
@@ -902,7 +939,18 @@ func pick_target() -> int:
 # ---------------------------------------------------------------- 무기 (대장간)
 
 func weapon_cost(idx: int) -> int:
-	return price(int(25 * pow(1.75, members[idx]["weapon_lv"])))
+	var c := price(int(25 * pow(1.75, members[idx]["weapon_lv"])))
+	if passive_on("appraise"):
+		c = maxi(1, int(c * 0.85))  # 무기상의 감정안 (v3.4)
+	return c
+
+func forge_cost(idx: int) -> int:
+	# 대장간 벼림 — 선택적 손맛 보너스라 무기점보다 싸게
+	return price(int(18 * pow(1.6, int(companion_forge.get(members[idx]["cls"], 0)))))
+
+func lantern_radius() -> float:
+	# 밤 시야 반경 (v3.4 §B-4). 최종 단계 = 대열 전체가 빛의 뱀
+	return 60.0 + 34.0 * up["lantern"]
 
 func set_weapon_lv(cls: String, lv: int) -> void:
 	# 무기 레벨은 편성 재구성에도 살아남도록 companion_weapons에 기록
@@ -948,7 +996,7 @@ func weapon_name(idx: int) -> String:
 
 const TITLE_DEFS := [
 	{"id": "pot_king",     "name": "항아리 파괴왕",     "stat": "pots",          "n": 100},
-	{"id": "late_riser",   "name": "또 늦잠 잔 자",     "stat": "inn_rests",     "n": 10},
+	{"id": "late_riser",   "name": "늦잠꾸러기",        "stat": "inn_rests",     "n": 10},
 	{"id": "tuna_witness", "name": "참치를 목격한 자",  "stat": "combos",        "n": 1},
 	{"id": "runaway",      "name": "삼십육계의 달인",   "stat": "flees",         "n": 10},
 	{"id": "gold_hand",    "name": "황금손",            "stat": "golden_caught", "n": 5},
@@ -991,9 +1039,9 @@ func do_prestige() -> void:
 	exp = 0
 	kills = 0
 	coins = 0
-	fields_unlocked = [true, false, false, false, false]
-	bosses_defeated = [false, false, false, false, false]
-	posters_f = [0, 0, 0, 0, 0]
+	fields_unlocked = [true, false, false, false, false, false]
+	bosses_defeated = [false, false, false, false, false, false]
+	posters_f = [0, 0, 0, 0, 0, 0]
 	extra_pots = 0
 	for k in up.keys():
 		up[k] = 0
@@ -1005,7 +1053,7 @@ func do_prestige() -> void:
 	kill_counts = {}
 	medals_small = 0
 	medals_spent = 0
-	keys = {"thief": false, "magic": false}
+	keys = {"thief": false, "magic": false, "sea": false}
 	opened = {"warehouse": false, "redchest": false}
 	signpost_seen = false
 	golden_first_done = false
@@ -1019,6 +1067,8 @@ func do_prestige() -> void:
 	sword_rock = 0
 	holy = holy_max()
 	deposit = 0
+	companion_forge = {}
+	new_flags = []
 	# v3.2 리셋 — 로토/작전/카지노 운. 이름·칭호·통계는 영구 (도전과제식)
 	roto_shield = false
 	roto_helm = false
@@ -1063,7 +1113,8 @@ func save_game() -> void:
 		"keys": keys, "opened": opened, "signpost_seen": signpost_seen,
 		# v3.1
 		"companions_owned": companions_owned, "party_ids": party_ids,
-		"companion_weapons": companion_weapons, "book_seen": book_seen,
+		"companion_weapons": companion_weapons, "companion_forge": companion_forge,
+		"new_flags": new_flags, "book_seen": book_seen,
 		"combo_gauge": combo_gauge, "combo_hint_known": combo_hint_known,
 		"thief_away": thief_away, "thief_return_at": thief_return_at,
 		"sword_rock": sword_rock, "playtime": playtime, "deposit": deposit,
@@ -1099,7 +1150,7 @@ func load_game() -> void:
 	var fu: Array = d.get("fields_unlocked", [])
 	var bd: Array = d.get("bosses_defeated", [])
 	var pf: Array = d.get("posters_f", [])
-	for i in 5:
+	for i in 6:  # v3.4: 6번째 = 숨겨진 수중 (구 세이브는 5개 — 기본값 유지)
 		if i < fu.size():
 			fields_unlocked[i] = bool(fu[i])
 		if i < bd.size():
@@ -1148,6 +1199,8 @@ func load_game() -> void:
 		companions_owned = d.get("companions_owned", {"hero": true})
 		party_ids = d.get("party_ids", ["hero"])
 		companion_weapons = d.get("companion_weapons", {})
+		companion_forge = d.get("companion_forge", {})
+		new_flags = d.get("new_flags", [])
 		book_seen = d.get("book_seen", {"hero": true})
 	else:
 		companions_owned = {"hero": true}
@@ -1173,7 +1226,7 @@ func load_game() -> void:
 	deposit = int(d.get("deposit", 0))
 	holy = holy_max()
 	# v3.2 (v5 이하 세이브는 기본값 + 이름은 기본명으로 — 이미 논 유저에겐 안 묻는다)
-	hero_name = String(d.get("hero_name", "늦잠꾸러기" if int(d.get("version", 1)) < 6 else ""))
+	hero_name = String(d.get("hero_name", "용사" if int(d.get("version", 1)) < 6 else ""))
 	tactic = String(d.get("tactic", ""))
 	tactic_known = bool(d.get("tactic_known", false))
 	roto_shield = bool(d.get("roto_shield", false))

@@ -197,6 +197,8 @@ func _process(delta: float) -> void:
 		if is_instance_valid(_holy_bar):
 			_holy_bar.size = Vector2(32.0 * clampf(Game.holy / maxf(1.0, Game.holy_max()), 0.0, 1.0), 4)
 			_holy_bar.color = Color(0.9, 0.95, 1.0) if healing else Color(0.55, 0.8, 1.0)
+	# 합체기 게이지 — 조합 성립 시 상시 표시 (v3.4)
+	_update_combo_bar()
 
 var _heal_accum := 0.0
 
@@ -319,6 +321,10 @@ func _rebuild_members() -> void:
 		p.mouse_exited.connect(func():
 			if _hover_heal_idx == mi:
 				_hover_heal_idx = -1)
+		# 파티창 클릭 = 스테이터스 창 (v3.4 §B-12 — 넘버를 보여줘야 한다)
+		p.gui_input.connect(func(ev: InputEvent):
+			if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
+				open_status(mi))
 		var v := VBoxContainer.new()
 		v.add_theme_constant_override("separation", 1)
 		p.add_child(v)
@@ -411,6 +417,65 @@ func popup(text: String, screen_pos: Vector2, color: Color = UILib.COL_GOLD) -> 
 	tw.parallel().tween_property(l, "modulate:a", 0.0, 0.8).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 	tw.tween_callback(l.queue_free)
 
+# ---------------------------------------------------------------- 스택 뱃지 (v3.4 §B-1)
+
+var _stack_badge: Label = null
+
+func update_stack_badge(n: int, pos: Vector2) -> void:
+	if n <= 0:
+		if _stack_badge != null and is_instance_valid(_stack_badge):
+			_stack_badge.queue_free()
+		_stack_badge = null
+		return
+	if _stack_badge == null or not is_instance_valid(_stack_badge):
+		_stack_badge = UILib.make_label("", UILib.FS, UILib.COL_GOLD)
+		_stack_badge.add_theme_color_override("font_outline_color", Color(0, 0, 0))
+		_stack_badge.add_theme_constant_override("outline_size", 3)
+		_stack_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_stack_badge.z_index = 30
+		_fx_root.add_child(_stack_badge)
+	_stack_badge.text = "×%d" % n
+	_stack_badge.position = pos
+
+# ---------------------------------------------------------------- 루팅 토스트 (v3.4 §B-10 — 우상단 미니 창)
+
+var _loot_toasts: Array = []
+
+func loot_toast(text: String, kind: String = "medal") -> void:
+	# 드퀘 미니 창 슬라이드 인 — 종류별 효과음, 연속 획득은 세로 큐
+	match kind:
+		"medal": Sfx.play("fanfare", 1.1)
+		"small": Sfx.play("golden", 1.3)
+		_: Sfx.play("chest")
+	var p := UILib.make_panel(UILib.COL_GOLD)
+	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_fx_root.add_child(p)
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 4)
+	p.add_child(h)
+	var dot := ColorRect.new()
+	dot.custom_minimum_size = Vector2(8, 8)
+	dot.color = UILib.COL_GOLD if kind != "small" else Color(0.8, 0.8, 0.9)
+	h.add_child(dot)
+	var l := UILib.make_label(text, UILib.FS)
+	h.add_child(l)
+	_loot_toasts.append(p)
+	var idx: int = _loot_toasts.find(p)
+	p.position = Vector2(644, 26 + idx * 26)  # 화면 밖 우측에서 슬라이드 인
+	var tw := create_tween()
+	tw.tween_callback(func():
+		p.position.x = 644.0 - 0.0)  # 레이아웃 확정 후
+	tw.tween_property(p, "position:x", 632.0 - maxf(p.size.x, 120.0), 0.25).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tw.tween_interval(2.6)
+	tw.tween_property(p, "modulate:a", 0.0, 0.4)
+	tw.tween_callback(func():
+		_loot_toasts.erase(p)
+		p.queue_free()
+		# 남은 토스트 위로 당기기
+		for j in _loot_toasts.size():
+			if is_instance_valid(_loot_toasts[j]):
+				_loot_toasts[j].position.y = 26 + j * 26)
+
 func fly_xp(from: Vector2, count: int = 3) -> void:
 	# XP = 처치 지점에서 직선 상승 + 반딧불이 잔상 (v3.2 §B-12 — 영혼의 가벼움)
 	# 골드(coin_burst)는 포물선으로 튀어 흡입 — 궤적·색·소리 3중 구분
@@ -464,7 +529,7 @@ func levelup_ritual(new_level: int) -> void:
 # ---------------------------------------------------------------- 이름 입력 (v3.2 §B-4)
 
 func show_name_input(on_done: Callable) -> void:
-	# 드퀘식 "이름을 입력하세요" — 기본값 늦잠꾸러기
+	# 드퀘식 "이름을 입력하세요" — 기본값 용사 (v3.4)
 	var r := ColorRect.new()
 	r.color = Color(0, 0, 0, 0.75)
 	r.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -479,7 +544,7 @@ func show_name_input(on_done: Callable) -> void:
 	p.add_child(v)
 	v.add_child(UILib.make_label("이름을 입력하세요", UILib.FS, UILib.COL_GOLD))
 	var le := LineEdit.new()
-	le.text = "늦잠꾸러기"
+	le.text = "용사"
 	le.max_length = 8
 	le.add_theme_font_override("font", UILib.FONT_PX)
 	le.add_theme_font_size_override("font_size", UILib.FS)
@@ -488,7 +553,7 @@ func show_name_input(on_done: Callable) -> void:
 	var done := func():
 		var n := le.text.strip_edges()
 		if n == "":
-			n = "늦잠꾸러기"
+			n = "용사"
 		Sfx.play("fanfare")
 		r.queue_free()
 		on_done.call(n)
@@ -603,8 +668,9 @@ func _menu_panel(title: String) -> VBoxContainer:
 	close_menu()
 	_menu_kind = kind
 	remote_open = remote
+	# v3.4 §B-2: 커맨드 창 = 화면 좌측 고정 슬롯 1개, 동시 개방 1개
 	var p := UILib.make_panel(UILib.COL_GOLD)
-	p.position = Vector2(160, 8)
+	p.position = Vector2(8, 26)
 	p.custom_minimum_size = Vector2(320, 0)
 	p.mouse_filter = Control.MOUSE_FILTER_STOP
 	_menu_root.add_child(p)
@@ -703,7 +769,10 @@ func open_chief() -> void:
 	v.add_child(UILib.make_label("— 전선 확대 —", UILib.FS, UILib.COL_GOLD))
 	_up_row(v, "win_cap", "전투창 확장", "동시 전투창 +1", 100, 2.2, 5, 2 + Game.up["win_cap"] * 2)
 	_up_row(v, "battle_speed", "전투 가속", "전투 턴 간격 -7%", 25, 1.22, 12, 0)
-	_up_row(v, "density", "무리 유인", "창당 최대 적 수 +1", 120, 2.0, 4, 4)
+	# v3.4 §B-3: 무리 = 편성 인원 연동. 업글은 +1 보정만
+	_up_row(v, "density", "무리 유인", "창당 최대 적 = 편성 인원. 여기에 +1 보정", 160, 1.0, 1, 4)
+	if Game.clock_on():
+		_up_row(v, "lantern", "등불", "밤 시야 반경 확장 (최종: 대열 전체가 빛의 뱀)", 120, 1.9, 3, 0)
 	v.add_child(UILib.make_label("— 원정 —", UILib.FS, UILib.COL_GOLD))
 	_up_row(v, "speed", "이속 강화", "파티 이동 속도 +8%", 25, 1.2, 9, 0)
 	_up_row(v, "shovel", "삽", "반짝이는 땅을 판다", 150, 1.0, 1, 0)
@@ -872,6 +941,7 @@ func open_church() -> void:
 	# 축복 — 주시(호버)의 힘을 벼리는 곳 (v3.1 §B-7)
 	v.add_child(UILib.make_label("— 축복 (주시의 힘) —", UILib.FS, UILib.COL_GOLD))
 	_up_row(v, "gaze", "주시 강화", "지켜보는 창의 가속·회심이 강해진다", 120, 1.6, 5, 0)
+	_up_row(v, "stack", "겹쳐보기", "전투창들이 겹쳐 정리되고, 스택 주시 = 전체 주시", 400, 1.0, 1, 0)  # v3.4 §B-1
 	_up_row(v, "heal_eye", "치유의 눈길", "파티창을 바라보면 성수가 상처를 씻는다", 150, 1.8, 4, 0)
 	_up_row(v, "golden_hands", "황금의 손길", "황금 슬라임을 문질러 붙잡을 수 있게 된다", 200, 1.0, 1, 0)
 	if Game.up["heal_eye"] > 0 or Game.up["golden_hands"] > 0:
@@ -964,7 +1034,7 @@ func open_gate() -> void:
 			match i:
 				1: sub = "발굴 반짝이가 풍부하다"
 				2: sub = "무리 조우가 많다"
-				3: sub = "물속 — 일행은 물고기가 된다. 진주와 정예의 땅"
+				3: sub = "눈보라 — 정예와 황금 슬라임의 땅"
 				4: sub = "지배자들의 심장부"
 			if Game.bosses_defeated[i]:
 				name_txt += " (해방됨)"
@@ -975,7 +1045,12 @@ func open_gate() -> void:
 			else:
 				_menu_row(v, name_txt, sub, "출발", true, func(): _depart(i))
 		else:
-			_menu_row(v, "？？？", "재건 계획도의 원정 가지에서 길을 열 수 있다", "—", false, func(): pass)
+			_menu_row(v, "？？？", "지배자를 쓰러뜨리면 다음 길이 열린다", "—", false, func(): pass)
+	# 숨겨진 행선지 — 바다의 노래를 아는 자에게만 (v3.4 §B-7)
+	if Game.keys["sea"]:
+		var hname := "≈ " + Game.FIELD_NAMES[Game.HIDDEN_FIELD] + (" (해방됨)" if Game.bosses_defeated[Game.HIDDEN_FIELD] else "")
+		_menu_row(v, hname, "바다의 노래가 이끄는 곳 — 일행은 물고기가 된다", "잠수", true,
+			func(): _depart(Game.HIDDEN_FIELD))
 
 func _depart(i: int) -> void:
 	close_menu()
@@ -986,17 +1061,56 @@ func _depart(i: int) -> void:
 
 # ---------------------------------------------------------------- 대장간
 
-func open_smith() -> void:
-	_menu_kind = "smith"
-	var v := _menu_panel("대장간 — \"이번엔 누굴 벼릴까\"")
+# ---------------------------------------------------------------- 무기점 (v3.4 §B-5 — 플랫 성장의 주축)
+
+func open_weaponshop() -> void:
+	_menu_kind = "weaponshop"
+	var v := _menu_panel("무기점 — \"골드가 곧 힘입니다\"")
 	for i in Game.members.size():
 		var m: Dictionary = Game.members[i]
 		if m["cls"] == "hero":
-			_menu_row(v, Game.weapon_name(i), "전설의 검은 돈으로 벼릴 수 없다 — 이야기와 바위가 벼린다", "—", false, func(): pass)
+			_menu_row(v, Game.weapon_name(i), "전설의 검은 돈으로 살 수 없다 — 이야기와 바위가 벼린다", "—", false, func(): pass)
 			continue
 		var cost := Game.weapon_cost(i)
+		# 강화 변화량 필수 표시 (v3.4): 공격력 37 → 41
+		var now := Game.member_atk(i)
+		var after := int((Game.member_atk_flat(i) + 2) * Game.forge_mult(m["cls"]))
 		_menu_row(v, "%s — %s" % [String(m["name"]), Game.weapon_name(i)],
-			"리듬에 맞춰 두들긴다 — 판정에 따라 +1/+2/+3 (직접 와야 한다)", "%d G" % cost,
+			"강화하면 공격력 %d → %d" % [now, after], "%d G" % cost,
+			Game.gold >= cost, func(): _buy_weapon(i, cost))
+
+func _buy_weapon(i: int, cost: int) -> void:
+	if not Game.try_spend(cost):
+		Sfx.play("deny")
+		return
+	Sfx.play("buy")
+	var cls := String(Game.members[i]["cls"])
+	var lv: int = int(Game.members[i]["weapon_lv"]) + 1
+	Game.set_weapon_lv(cls, lv)
+	event("공격력이 올랐다! %s (공격력 %d)" % [Game.weapon_name(i), Game.member_atk(i)], 3.0)
+	if lv == 5 or lv == 10:
+		Sfx.play("fanfare_big")
+		event("%s이(가) 다시 태어났다! — 「%s」" % [Game.members[i]["name"], Game.weapon_name(i)], 4.0)
+	Game.save_game()
+	open_weaponshop()
+
+# ---------------------------------------------------------------- 대장간 (v3.4 — 벼림 % 배율, 선택적 손맛)
+
+func open_smith() -> void:
+	_menu_kind = "smith"
+	var v := _menu_panel("대장간 — \"벼리면 더 강해지지\"")
+	v.add_child(UILib.make_label("벼림 보정 = % 배율. 무기(플랫)가 클수록 가치가 커진다", UILib.FS, UILib.COL_GRAY))
+	for i in Game.members.size():
+		var m: Dictionary = Game.members[i]
+		if m["cls"] == "hero":
+			_menu_row(v, Game.weapon_name(i), "전설의 검은 인간의 화덕을 거부한다", "—", false, func(): pass)
+			continue
+		var cost := Game.forge_cost(i)
+		var pts: int = int(Game.companion_forge.get(m["cls"], 0))
+		var now := Game.member_atk(i)
+		var after := int(Game.member_atk_flat(i) * (Game.forge_mult(m["cls"]) + 0.03))
+		_menu_row(v, "%s — 벼림 +%d%%" % [String(m["name"]), pts * 3],
+			"리듬 판정 +1~+3. 지금 벼리면 공격력 %d → 약 %d (직접 와야 한다)" % [now, after], "%d G" % cost,
 			Game.gold >= cost and not remote_open, func(): _start_forge(i, cost))
 
 func _start_forge(i: int, cost: int) -> void:
@@ -1017,33 +1131,34 @@ func _start_forge(i: int, cost: int) -> void:
 		_apply_forge(i, result))
 
 func _apply_forge(i: int, result: int) -> void:
-	var lv: int = int(Game.members[i]["weapon_lv"]) + result
-	# 편성에서 빠졌다 돌아와도 무기는 기억된다 (v3.1)
-	Game.set_weapon_lv(String(Game.members[i]["cls"]), lv)
+	# v3.4: 대장간 = 벼림 % (무기 플랫과 별개 슬롯)
+	var cls := String(Game.members[i]["cls"])
+	Game.companion_forge[cls] = int(Game.companion_forge.get(cls, 0)) + result
+	var pct: int = int(Game.companion_forge[cls]) * 3
 	if result >= 3:
 		Sfx.play("fanfare_big")
-		event("회심의 필살작!! %s" % Game.weapon_name(i), 3.5)
+		event("회심의 필살작!! 벼림 +%d%% (공격력 %d)" % [pct, Game.member_atk(i)], 3.5)
 		Game.smith_perfects += 1
 		if Game.smith_perfects >= 3 and Game.own_medal("anvil_bless"):
 			event("훈장 「모루의 축복」 을 손에 넣었다!", 4.0)
 			_update_top()
 	elif result == 2:
 		Sfx.play("buy")
-		event("좋은 물건이다. %s" % Game.weapon_name(i), 2.5)
+		event("좋은 벼림이다. +%d%% (공격력 %d)" % [pct, Game.member_atk(i)], 2.5)
 	else:
 		Sfx.play("bump")
-		event("…뭐, 쓸 만하다. %s" % Game.weapon_name(i), 2.5)
-	if (lv >= 5 and lv - result < 5) or (lv >= 10 and lv - result < 10):
-		Sfx.play("fanfare_big")
-		event("%s이(가) 다시 태어났다!" % Game.weapon_name(i), 3.5)
+		event("…뭐, 쓸 만하다. +%d%% (공격력 %d)" % [pct, Game.member_atk(i)], 2.5)
 	if main != null:
 		main.on_forged()
+	Game.party_changed.emit()
 	Game.save_game()
 
 func open_board(tab: int = -1) -> void:
 	_menu_kind = "board"
 	if tab >= 0:
 		_board_tab = tab
+	elif Game.current_field < 4:
+		_board_tab = Game.current_field  # v3.4 §B-8: 현재 필드 탭 자동 선택
 	if not Game.fields_unlocked[_board_tab]:
 		_board_tab = 0
 	var v := _menu_panel("수배 게시판 — 정찰대 파견")
@@ -1099,6 +1214,73 @@ func _buy_golden_info(cost: int) -> void:
 	Sfx.play("buy")
 	event("금색으로 빛나는 것을 봤다는 소문이다…", 3.0)
 	open_board()
+
+# ---------------------------------------------------------------- 스테이터스 창 (v3.4 §B-12)
+
+func open_status(i: int) -> void:
+	if i >= Game.members.size():
+		return
+	_menu_kind = "status"
+	var m: Dictionary = Game.members[i]
+	var v := _menu_panel("스테이터스 — %s" % String(m["name"]))
+	var title_txt := Game.current_title()
+	if m["cls"] == "hero" and title_txt != "":
+		v.add_child(UILib.make_label("칭호: 「%s」" % title_txt, UILib.FS, UILib.COL_GOLD))
+	v.add_child(UILib.make_label("Lv %d    HP %d / %d" % [Game.level, m["hp"], m["max_hp"]], UILib.FS))
+	var fm := Game.forge_mult(String(m["cls"]))
+	v.add_child(UILib.make_label("공격력 %d  (기본 %d × 벼림 %d%%)" % [
+		Game.member_atk(i), Game.member_atk_flat(i), int(fm * 100.0)], UILib.FS))
+	v.add_child(UILib.make_label("무기: %s" % Game.weapon_name(i), UILib.FS))
+	var pdesc: String = Game.COMPANIONS[m["cls"]]["pdesc"]
+	v.add_child(UILib.make_label("패시브: %s" % pdesc.split(" — ")[0], UILib.FS, UILib.COL_GRAY))
+	var t_name: String = Game.TACTIC_NAMES.get(Game.tactic, "따로 없음")
+	v.add_child(UILib.make_label("작전: %s" % t_name, UILib.FS))
+	if Game.medals_equipped.is_empty():
+		v.add_child(UILib.make_label("장착 훈장: 없음", UILib.FS, UILib.COL_GRAY))
+	else:
+		v.add_child(UILib.make_label("— 장착 훈장 —", UILib.FS, UILib.COL_GOLD))
+		for mid in Game.medals_equipped:
+			v.add_child(UILib.make_label("★ " + String(Game.MEDAL_DEFS[mid]["name"]), UILib.FS))
+
+# ---------------------------------------------------------------- 합체기 게이지 (v3.4 §B-14 — 상시 가시성)
+
+var _combo_bar_bg: PanelContainer = null
+var _combo_bar: ColorRect = null
+var _combo_full_told := false
+
+func _update_combo_bar() -> void:
+	var active: bool = Game.ui_unlocked["party"] and not Game.active_combo().is_empty() and not _title_suppress
+	if active and _combo_bar_bg == null:
+		_combo_bar_bg = UILib.make_panel()
+		_combo_bar_bg.position = Vector2(632 - 74 - (Game.members.size() - 1) * 82 - 14, 312)
+		_combo_bar_bg.custom_minimum_size = Vector2(10, 40)
+		add_child(_combo_bar_bg)
+		var bg := ColorRect.new()
+		bg.color = Color(0.15, 0.12, 0.2)
+		bg.custom_minimum_size = Vector2(4, 32)
+		_combo_bar_bg.add_child(bg)
+		_combo_bar = ColorRect.new()
+		_combo_bar.color = UILib.COL_GOLD
+		bg.add_child(_combo_bar)
+	elif not active and _combo_bar_bg != null:
+		if is_instance_valid(_combo_bar_bg):
+			_combo_bar_bg.queue_free()
+		_combo_bar_bg = null
+		_combo_bar = null
+		_combo_full_told = false
+	if _combo_bar != null and is_instance_valid(_combo_bar):
+		var g: float = clampf(Game.combo_gauge, 0.0, 1.0)
+		_combo_bar.size = Vector2(4, 32.0 * g)
+		_combo_bar.position = Vector2(0, 32.0 - _combo_bar.size.y)
+		if g >= 1.0:
+			# 만충 = 점멸 + 토스트 (1회)
+			_combo_bar.color = UILib.COL_GOLD if sin(Time.get_ticks_msec() / 120.0) > 0.0 else UILib.COL_WHITE
+			if not _combo_full_told:
+				_combo_full_told = true
+				loot_toast("합체기 준비 완료! (파티 클릭)", "medal")
+		else:
+			_combo_bar.color = UILib.COL_GOLD
+			_combo_full_told = false
 
 # ---------------------------------------------------------------- 옵션 (v3.3 §D — 이 목록이 전부다)
 
@@ -1464,7 +1646,7 @@ func _show_verse(i: int) -> void:
 func open_medals() -> void:
 	_menu_kind = "medals"
 	var v := _menu_panel("훈장 도감 (%d/%d 장착)" % [Game.medals_equipped.size(), Game.medal_slots()])
-	# v3.2: 3계층으로 나눠 전시 — 순수/양날/조건/유령
+	# v3.2: 3계층으로 나눠 전시 — 순수/양날/조건/유령 (+v3.4 NEW 뱃지, 열람 시 해제)
 	for tier in ["순수", "양날", "조건", "유령"]:
 		v.add_child(UILib.make_label("— %s형 —" % tier, UILib.FS, UILib.COL_GOLD))
 		for id in Game.MEDAL_DEFS.keys():
@@ -1473,10 +1655,12 @@ func open_medals() -> void:
 				continue
 			if Game.medals_owned.has(id):
 				var on := Game.medal_on(id)
-				_menu_row(v, ("★ " if on else "・ ") + d["name"], d["desc"],
+				var badge := "[NEW] " if Game.is_new(id) else ""
+				_menu_row(v, badge + ("★ " if on else "・ ") + d["name"], d["desc"],
 					"해제" if on else "장착", true, func(): _toggle_medal(id))
 			else:
 				_menu_row(v, "・ ？？？", d["hint"], "—", false, func(): pass)
+	Game.clear_new(Game.medals_owned)  # 도감을 펼쳤으니 NEW 해제
 
 func _toggle_medal(id: String) -> void:
 	if Game.toggle_medal(id):

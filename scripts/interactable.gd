@@ -54,6 +54,9 @@ func _ready() -> void:
 		"casino":
 			_make_sprite("casino", Rect2())
 			_sprite.self_modulate = Color(0.9, 0.65, 1.0)  # 임시 — 보라 틴트 + 점멸 간판
+		"weaponshop":
+			_make_sprite("shop", Rect2())
+			_sprite.self_modulate = Color(0.75, 0.8, 0.95)  # 임시 — 강철빛 무기점 (v3.4)
 		"bard":
 			_make_sprite("bard", Rect2())
 			_sprite.self_modulate = Color(0.65, 1.0, 0.75)  # 임시 — 초록 틴트 음유시인
@@ -350,6 +353,7 @@ func hover_name() -> String:
 		"resident": return resident_name
 		"cheatpot": return "치트 항아리"
 		"bank": return "은행"
+		"weaponshop": return "무기점"
 		"frogstatue": return "개구리 석상"
 		"swordrock": return "검이 꽂힌 바위"
 		"home": return "용사의 집"
@@ -413,6 +417,8 @@ func flavor() -> String:
 			return "치트 항아리. 두드릴 때마다 1000 G. (디버그)"
 		"bank":
 			return "은행이다. 예금은 전멸해도 안전하다. (Space)"
+		"weaponshop":
+			return "무기점이다. 골드가 곧 공격력이 되는 곳. (Space)"
 		"frogstatue":
 			return "개구리 석상. 잔돈을 넣어 달라는 표정이다. (Space)"
 		"home":
@@ -455,6 +461,7 @@ func pick_radius() -> float:
 		"sparkle": return 12.0
 		"fountain": return 14.0
 		"bank": return 22.0
+		"weaponshop": return 26.0
 		"frogstatue": return 12.0
 		"swordrock": return 16.0
 		"home": return 20.0

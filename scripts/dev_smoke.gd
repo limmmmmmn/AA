@@ -123,7 +123,7 @@ func _run() -> void:
 	main.hud.close_menu()
 	print("[SMOKE] 분산 업글 OK — speed/max_hp/gold_mult")
 
-	# 8.5) 여관 회복 + 대장간 판정 (v3.1: 무기는 companion_weapons에 기억된다)
+	# 8.5) 여관 회복 + 무기점(플랫)/대장간(벼림%) 이원화 (v3.4 §B-5)
 	if not Game.has_member("warrior"):
 		Game.own_companion("warrior")
 	Game.damage_member(0, 5)
@@ -135,9 +135,24 @@ func _run() -> void:
 		if Game.members[i]["cls"] == "warrior":
 			forge_idx = i
 	assert(forge_idx >= 0)
+	# 무기점 — 골드 → 즉시 플랫 (무기상 주민 영입 포함)
+	assert(main.try_pay_resident("weaponsmith"))
+	await get_tree().create_timer(3.0).timeout
+	assert(Game.buildings["weaponshop"])
+	var atk_before: int = Game.member_atk(forge_idx)
+	main.hud.open_weaponshop()
+	main.hud._buy_weapon(forge_idx, Game.weapon_cost(forge_idx))
+	assert(Game.member_atk(forge_idx) > atk_before)             # 변화량이 실재한다
+	assert(int(Game.companion_weapons.get("warrior", 0)) == 1)  # 플랫 = 무기점
+	# 대장간 — 벼림 % (별개 슬롯)
+	var flat_now: int = Game.member_atk_flat(forge_idx)
 	main.hud._apply_forge(forge_idx, 3)
-	assert(int(Game.companion_weapons.get("warrior", 0)) == 3)  # 편성을 넘어 기억
-	print("[SMOKE] 여관/대장간 OK — 무기 +%d" % Game.members[forge_idx]["weapon_lv"])
+	assert(int(Game.companion_forge.get("warrior", 0)) == 3)    # 벼림 = 대장간
+	assert(Game.member_atk(forge_idx) >= int(flat_now * 1.09))  # ×1.09 배율 반영
+	main.hud.close_menu()
+	print("[SMOKE] 여관/무기점/대장간 OK — atk %d (플랫 %d × 벼림 %d%%)" % [
+		Game.member_atk(forge_idx), Game.member_atk_flat(forge_idx),
+		int(Game.forge_mult("warrior") * 100)])
 
 	# 9) 도박사 영입 → 카지노 + 서사시
 	assert(main.try_pay_resident("gambler"))
@@ -170,17 +185,20 @@ func _run() -> void:
 	assert(Game.combo_hint_known)
 	print("[SMOKE] 서사시 사건 OK — 드루이드/검바위/힌트")
 
-	# 9.7) v3.1 — 편성 + 합체기 (어부 형제 → 참치 어택)
-	Game.own_companion("fisher_a")
-	Game.own_companion("fisher_b")
+	# 9.7) v3.4 — 편성 + 합체기 (참치 어택 = 고전 4인: 용사+사제+마법사+도적)
+	Game.own_companion("priest")
+	Game.own_companion("mage")
+	Game.companions_owned["thief"] = false  # 배신 상태 초기화 후 재영입
+	Game.thief_away = false
+	Game.own_companion("thief")
 	for id in Game.party_ids.duplicate():
-		if id != "hero" and id != "fisher_a" and id != "fisher_b" and Game.party_ids.size() > 3:
+		if id != "hero" and Game.party_ids.size() > 1:
 			Game.toggle_party(id)
-	if not Game.party_ids.has("fisher_a"):
-		assert(Game.toggle_party("fisher_a"))
-	if not Game.party_ids.has("fisher_b"):
-		assert(Game.toggle_party("fisher_b"))
-	assert(not Game.active_combo().is_empty())
+	for id in ["priest", "mage", "thief"]:
+		if not Game.party_ids.has(id):
+			assert(Game.toggle_party(id))
+	var combo: Dictionary = Game.active_combo()
+	assert(not combo.is_empty() and String(combo["id"]) == "tuna")  # 전설의 조합 …참치다
 	Game.combo_gauge = 1.0
 	var mons3: Array = []
 	for m in get_tree().get_nodes_in_group("monster"):
@@ -308,13 +326,37 @@ func _run() -> void:
 	assert(Game.weapon_name(0) == "전설의 검·진")
 	print("[SMOKE] 로토 3점 OK — %s" % Game.weapon_name(0))
 
-	# 15) v3.2 — 수중 필드 (물고기화) + 우물/집 + 칭호
-	main.swap_field(3)
+	# 15) v3.4 — 숨겨진 수중 필드 (바다의 노래 → 물고기화) + 스택 + 우물/집 + 칭호
+	Game.keys["sea"] = true  # 어부 부탁 완결의 열쇠
+	main.swap_field(Game.HIDDEN_FIELD)
 	await get_tree().create_timer(1.2).timeout
 	assert(main.party.underwater)
 	main.swap_field(0)
 	await get_tree().create_timer(1.2).timeout
 	assert(not main.party.underwater)
+	# 겹쳐보기 스택 — 창 3개 이상이면 카스케이드 + ×N 뱃지
+	Game.up["stack"] = 1
+	Game.up["win_cap"] = 5  # 상한 여유 확보
+	for attempt in 12:
+		if main._docked_windows().size() >= 3:
+			break
+		for m in get_tree().get_nodes_in_group("monster"):
+			if is_instance_valid(m) and not m.is_boss and m.is_visible_in_tree():
+				main._bump_monster(m)
+				break
+		await get_tree().create_timer(0.4).timeout
+	# 전투가 순삭이라 창이 닫히기 전에 — 대기 없이 즉시 검증 (배지는 relayout에서 동기 생성)
+	var n_now: int = main._docked_windows().size()
+	main._relayout_windows()
+	assert(main._stack_active(n_now))
+	assert(main.hud._stack_badge != null)
+	main._on_window_clicked(main._docked_windows()[0])  # 셔플이 죽지 않는다
+	for w4 in main.windows.duplicate():
+		if is_instance_valid(w4) and not w4.is_boss:
+			w4.close_after(0.0)
+	Game.up["stack"] = 0
+	await get_tree().create_timer(0.8).timeout
+	print("[SMOKE] 스택 겹쳐보기 OK")
 	# 부흥 단계가 올라 우물이 있어야 한다 (합류 인원 다수)
 	assert(main.join_count() >= 7)
 	await get_tree().create_timer(2.0).timeout  # 재건축 대기
@@ -357,7 +399,8 @@ func _run() -> void:
 	Game.load_game()
 	assert(Game.companion_count() == owned_n)
 	assert(Game.party_ids == pids)
-	assert(int(Game.companion_weapons.get("warrior", 0)) == 3)
+	assert(int(Game.companion_weapons.get("warrior", 0)) == 1)   # 무기점 플랫
+	assert(int(Game.companion_forge.get("warrior", 0)) == 3)    # 대장간 벼림 (v3.4)
 	assert(Game.deposit == dep_before)
 	assert(Game.hero_name == "테스트용사")
 	assert(Game.roto_complete())

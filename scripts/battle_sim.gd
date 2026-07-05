@@ -12,6 +12,7 @@ signal golden_escaped
 signal golden_captured(reward: int)
 signal victory(gold_reward: int, exp_reward: int)
 signal frogified
+signal enemy_acted(index: int)   # v3.4 §B-11 — 공격 주체 스텝 연출용
 
 const LETTERS := ["A", "B", "C", "D", "E"]
 
@@ -253,6 +254,7 @@ func _enemy_act(i: int) -> void:
 	var t := Game.pick_target()
 	if t < 0:
 		return
+	enemy_acted.emit(i)
 	var dmg := int(maxf(1.0, e["atk"] * randf_range(0.8, 1.2) * tactic_in_mult()))
 	line.emit("%s의 공격!" % display_name(e))
 	Game.damage_member(t, dmg)

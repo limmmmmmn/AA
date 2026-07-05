@@ -5,6 +5,7 @@ extends Control
 
 signal golden_hover_changed(hovering: bool)
 signal flee_requested
+signal clicked                      # 스택 셔플용 (v3.4 §B-1)
 
 var sim: BattleSim
 var is_boss := false
@@ -46,6 +47,7 @@ func setup(p_sim: BattleSim, p_size: Vector2, boss: bool) -> void:
 	sim.golden_captured.connect(_on_golden_captured)
 	sim.victory.connect(_on_victory)
 	sim.frogified.connect(_on_frogified)
+	sim.enemy_acted.connect(_on_enemy_acted)
 	mouse_entered.connect(_on_mouse_entered)
 	mouse_exited.connect(_on_mouse_exited)
 
@@ -54,10 +56,11 @@ func _ready() -> void:
 	pivot_offset = size / 2.0
 	clip_contents = true
 	_build_enemies()
+	# v3.4 §B-1: 텍스트 로그 = 하단 1/3, 1~2줄. 몬스터가 주인공
 	_log_label = UILib.make_label("", UILib.FS)
 	_log_label.add_theme_constant_override("line_spacing", -3)
-	_log_label.position = Vector2(8, size.y - 42)
-	_log_label.size = Vector2(size.x - 16, 34)
+	_log_label.position = Vector2(7, size.y - 28)
+	_log_label.size = Vector2(size.x - 14, 22)
 	_log_label.clip_text = true
 	add_child(_log_label)
 	# 드퀘식 펼침 — 중앙에서 확장 (0.1초)
@@ -93,12 +96,12 @@ func _build_enemies() -> void:
 	_layout_enemies()
 
 func _layout_enemies() -> void:
-	# 몬스터는 검은 바탕 정중앙, 창 높이의 ~55%로 크게 (정수 배율)
+	# v3.4 §B-1: 몬스터 존 = 상단 2/3, 크게 (정수 배율)
 	if _enemy_nodes.is_empty():
 		return
-	var log_h := 44.0
+	var log_h := size.y / 3.0
 	var area_h := size.y - log_h - 4.0
-	var target_h := size.y * 0.5
+	var target_h := area_h * 0.78
 	var s := 4
 	while s > 1:
 		var total_w := 0.0
@@ -138,8 +141,8 @@ func apply_dock(pos: Vector2, sz: Vector2) -> void:
 		custom_minimum_size = sz
 		pivot_offset = sz / 2.0
 		if _log_label != null:
-			_log_label.position = Vector2(8, size.y - 42)
-			_log_label.size = Vector2(size.x - 16, 34)
+			_log_label.position = Vector2(7, size.y - 28)
+			_log_label.size = Vector2(size.x - 14, 22)
 		_layout_enemies()
 		if _golden != null and is_instance_valid(_golden):
 			_golden.position = _golden.position.clamp(Vector2(4, 4), size - _golden.size - Vector2(4, 4))
@@ -197,7 +200,7 @@ func _type_tick(delta: float) -> void:
 		_typed = 0
 		_type_t = 0.0
 		_lines.append("")
-		while _lines.size() > 3:
+		while _lines.size() > 2:
 			_lines.pop_front()
 	if _typing == "":
 		return
@@ -227,7 +230,7 @@ func _type_tick(delta: float) -> void:
 
 func _commit_full_line(text: String) -> void:
 	_lines.append(text)
-	while _lines.size() > 3:
+	while _lines.size() > 2:
 		_lines.pop_front()
 	_update_log()
 
@@ -260,6 +263,20 @@ func _draw() -> void:
 	if _golden != null and is_instance_valid(_golden) and sim.golden_active and sim.golden_gauge > 0.01:
 		var c := _golden.position + _golden.size / 2.0
 		draw_arc(c, 15.0, -PI / 2.0, -PI / 2.0 + TAU * clampf(sim.golden_gauge, 0.0, 1.0), 24, UILib.COL_GOLD, 2.0)
+	# 적 미니 HP바 — 12×2px, "어느 창이 곧 끝나나" 판단 재료 (v3.4 §B-11)
+	if sim != null:
+		for i in mini(_enemy_nodes.size(), sim.enemies.size()):
+			var e: Dictionary = sim.enemies[i]
+			if e["dead"]:
+				continue
+			var node: TextureRect = _enemy_nodes[i]
+			if not is_instance_valid(node):
+				continue
+			var bx := node.position.x + node.size.x / 2.0 - 6.0
+			var by := node.position.y + node.size.y + 2.0
+			var ratio := clampf(float(e["hp"]) / maxf(1.0, float(e["max_hp"])), 0.0, 1.0)
+			draw_rect(Rect2(bx, by, 12, 2), Color(0.15, 0.15, 0.2), true)
+			draw_rect(Rect2(bx, by, 12.0 * ratio, 2), UILib.COL_GREEN if ratio > 0.35 else UILib.COL_RED, true)
 
 # ---------------------------------------------------------------- battle feedback
 
@@ -367,6 +384,18 @@ func _update_flee_btn() -> void:
 			_flee_btn.queue_free()
 		_flee_btn = null
 
+func _on_enemy_acted(index: int) -> void:
+	# 액션 강조 — 공격 주체가 한 발 앞으로 튀는 스텝 (v3.4 §B-11)
+	if closing or index >= _enemy_nodes.size():
+		return
+	var node: TextureRect = _enemy_nodes[index]
+	if not is_instance_valid(node) or index >= _enemy_base_pos.size():
+		return
+	var base: Vector2 = _enemy_base_pos[index]
+	node.position = base + Vector2(0, 4)
+	var tw := create_tween()
+	tw.tween_property(node, "position", base, 0.18).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+
 func _on_frogified() -> void:
 	# 개구리의 왈츠 — 몬스터들이 초록으로 물들어 꿈틀거린다
 	Sfx.play("squish", 0.7)
@@ -395,6 +424,10 @@ func _on_golden_spawned() -> void:
 	add_child(_golden)
 
 func _gui_input(event: InputEvent) -> void:
+	# 좌클릭 = 스택 셔플 신호 (황금 슬라임 문지르기와 별개, v3.4)
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT \
+			and not is_golden_hovering():
+		clicked.emit()
 	if sim == null or not sim.golden_active or _golden == null:
 		return
 	if event is InputEventMouseMotion and (event.button_mask & MOUSE_BUTTON_MASK_LEFT):
