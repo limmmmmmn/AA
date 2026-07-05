@@ -21,11 +21,21 @@ var _ai_wait := 0.0
 var _history: Array[Vector2] = []
 var _sprites: Array = []           # 멤버 인덱스 순 Sprite2D
 var _charm_sprites: Array = []     # 매혹된 몬스터 (장식 추종자)
+var _mount_sprite: Sprite2D = null # 탈것 (v3.2 §B-2 — 용사 밑에서 뜀박질)
 var _anim_t := 0.0
 var _dir_row := 0                  # 0 아래 1 왼쪽 2 오른쪽 3 위
 var _moving := false
 var _bob_t := 0.0
 var combo_glow := false            # 합체기 준비 완료 — 파티 발광
+var underwater := false            # 수중 필드 — 물고기화 (v3.2 §B-1)
+var _vel := Vector2.ZERO           # 수중 관성
+
+func set_underwater(v: bool) -> void:
+	if underwater == v:
+		return
+	underwater = v
+	_vel = Vector2.ZERO
+	_rebuild_sprites()
 
 func _ready() -> void:
 	Game.party_changed.connect(_rebuild_sprites)
@@ -52,13 +62,28 @@ func _rebuild_sprites() -> void:
 	for m in Game.members:
 		var d: Dictionary = Game.CLASS_DEFS[m["cls"]]
 		var s := Sprite2D.new()
-		s.texture = load(d["tex"])
-		s.hframes = 3
-		s.vframes = 4
-		s.frame = 1
-		s.offset = Vector2(0, -float(d["frame_h"]) / 2.0)
+		if underwater:
+			# 물고기화 (v3.2 §B-1 — "일행은 물고기가 되었다!") 임시: 물고기 도트는 png 교체 예정
+			s.texture = load("res://assets/enemies/slime_fly.png")
+			s.offset = Vector2(0, -float(s.texture.get_height()) / 2.0)
+		else:
+			s.texture = load(d["tex"])
+			s.hframes = 3
+			s.vframes = 4
+			s.frame = 1
+			s.offset = Vector2(0, -float(d["frame_h"]) / 2.0)
 		add_child(s)
 		_sprites.append(s)
+	# 탈것 — 이속 트리의 끝 (v3.2 §B-2). 임시: 금빛 새 실루엣
+	if _mount_sprite != null and is_instance_valid(_mount_sprite):
+		_mount_sprite.queue_free()
+	_mount_sprite = null
+	if Game.mounted() and not underwater:
+		_mount_sprite = Sprite2D.new()
+		_mount_sprite.texture = load("res://assets/enemies/bat.png")
+		_mount_sprite.modulate = Color(1.6, 1.3, 0.5)
+		_mount_sprite.offset = Vector2(0, -4)
+		add_child(_mount_sprite)
 	_rebuild_charmed()
 
 func _rebuild_charmed() -> void:
@@ -105,6 +130,18 @@ func _physics_process(delta: float) -> void:
 		_check_passive_bumps()
 		_layout_sprites()
 		return
+	elif underwater and _vel.length() > 8.0:
+		# 수중 관성 — 손을 떼도 잠깐 미끄러진다 (v3.2 §B-1)
+		_vel = _vel.lerp(Vector2.ZERO, minf(1.0, 2.5 * delta))
+		head_pos = (head_pos + _vel * delta).clamp(bounds_min, bounds_max)
+		_moving = true
+		if _history.is_empty() or head_pos.distance_to(_history[0]) >= HISTORY_STEP:
+			_history.push_front(head_pos)
+			if _history.size() > 120:
+				_history.pop_back()
+		_check_passive_bumps()
+		_layout_sprites()
+		return
 
 	# 용사의 직감 — 자율 행동
 	if target_node == null and target_point == null and manual_hold <= 0.0:
@@ -142,7 +179,12 @@ func _physics_process(delta: float) -> void:
 	_layout_sprites()
 
 func _step(dir: Vector2, delta: float) -> void:
-	head_pos += dir * Game.move_speed() * delta
+	if underwater:
+		# 8방향 부유 + 가벼운 관성
+		_vel = _vel.lerp(dir * Game.move_speed(), minf(1.0, 5.0 * delta))
+		head_pos += _vel * delta
+	else:
+		head_pos += dir * Game.move_speed() * delta
 	head_pos = head_pos.clamp(bounds_min, bounds_max)
 	_moving = true
 	_dir_row = _dir_from(dir)
@@ -199,15 +241,30 @@ func _layout_sprites() -> void:
 		if ghost:
 			s.modulate = Color(0.75, 0.85, 1.3, 0.5)
 			s.position.y -= 3.0 + sin(_bob_t + slot) * 2.0
-			s.frame_coords = Vector2i(1, _dir_row)
+			if not underwater:
+				s.frame_coords = Vector2i(1, _dir_row)
 		else:
 			var tint: Color = Game.COMPANIONS[Game.members[idx]["cls"]].get("tint", Color(1, 1, 1))
+			if Game.members[idx]["cls"] == "hero" and Game.roto_count() > 0:
+				# 로토 세트 단계 변신 (v3.2 §B-7 — 임시: 점점 금빛으로. 도트 3단은 png 교체 예정)
+				var rc := float(Game.roto_count())
+				tint = Color(tint.r + 0.12 * rc, tint.g + 0.09 * rc, tint.b - 0.05 * rc)
 			if combo_glow:
 				# 합체기 준비 완료 — 온몸이 은은하게 빛난다
 				var g := 1.0 + 0.35 * (0.5 + 0.5 * sin(_bob_t * 2.5))
 				tint = Color(tint.r * g, tint.g * g, tint.b * g)
 			s.modulate = tint
-			s.frame_coords = Vector2i(frame_col, _dir_row)
+			if underwater:
+				s.position.y -= 2.0 + sin(_bob_t * 1.6 + slot * 0.7) * 2.5  # 부유
+				s.flip_h = _dir_row == 1
+			else:
+				s.frame_coords = Vector2i(frame_col, _dir_row)
+	# 탈것 — 용사 발밑에서 함께 달린다
+	if _mount_sprite != null and is_instance_valid(_mount_sprite) and not _sprites.is_empty() and is_instance_valid(_sprites[0]):
+		_mount_sprite.position = _sprites[0].position + Vector2(0, 1)
+		_mount_sprite.position.y += sin(_bob_t * 6.0) * (1.5 if _moving else 0.5)
+		_mount_sprite.z_index = _sprites[0].z_index - 1
+		_mount_sprite.flip_h = _dir_row == 1
 	# 매혹된 몬스터는 대열 맨 뒤에서 통통
 	for ci in _charm_sprites.size():
 		var cs: Sprite2D = _charm_sprites[ci]

@@ -224,25 +224,147 @@ func _run() -> void:
 	assert(dep > 0 and Game.deposit == dep)
 	print("[SMOKE] 은행 OK — 예금 %d G" % Game.deposit)
 
-	# 10) 전멸 → 부활 (예금은 불가침)
+	# 10) 전멸 → 부활 (예금은 불가침) + 원혼의 함성 위로 지급 (v3.2)
 	var dep_before: int = Game.deposit
 	for i in Game.members.size():
 		Game.damage_member(i, 99999999)
-	await get_tree().create_timer(4.0).timeout
+	await get_tree().create_timer(6.0).timeout
 	assert(Game.alive_count() == Game.members.size())
 	assert(Game.deposit == dep_before)  # v3.1 §B-8 — 전멸 페널티 면제
+	assert(Game.stats["wipes"] >= 1)
+	assert(Game.medals_owned.has("ghost_warcry"))  # 쓰러져 본 자에게 주어진다
 	print("[SMOKE] 전멸/부활 OK — gold=%d 예금=%d" % [Game.gold, Game.deposit])
 
-	# 11) 세이브/로드 (v5 — 동료/편성/무기/합체기/은행)
+	# 12) v3.2 — 작전 명령 (여관 해금 + 창별 가중치)
+	assert(Game.tactic_known)  # 숲 개방 + 여관 → 자동 해금
+	Game.tactic = "attack"
+	var sim_t := BattleSim.new()
+	sim_t.setup([Game.MONSTER_DEFS[0]], false)
+	assert(sim_t.window_tactic == "attack")
+	assert(sim_t.tactic_out_mult() > 1.0 and sim_t.tactic_in_mult() > 1.0)
+	Game.tactic = "life"
+	var sim_l := BattleSim.new()
+	sim_l.setup([Game.MONSTER_DEFS[0]], false)
+	assert(sim_l.tactic_in_mult() < 1.0 and sim_l.tactic_gold_mult() < 1.0)
+	Game.tactic = ""
+	print("[SMOKE] 작전 명령 OK")
+
+	# 13) v3.2 — 밤낮 + 은빛 슬라임 (시계는 숲 개방 후 가동)
+	assert(Game.clock_on())
+	var save_pt: float = Game.playtime
+	Game.playtime = Game.DAY_LEN + 5.0  # 강제로 밤
+	assert(Game.is_night())
+	var wn: BattleWindow = null
+	var mons4: Array = []
+	for m in get_tree().get_nodes_in_group("monster"):
+		if is_instance_valid(m) and not m.is_boss:
+			mons4.append(m)
+	main._bump_monster(mons4[0])
+	await get_tree().create_timer(0.6).timeout
+	for w3 in main.windows:
+		if is_instance_valid(w3) and not w3.closing and not w3.sim.finished:
+			wn = w3
+	assert(wn != null)
+	wn.sim.spawn_golden(20.0, true)  # 은빛
+	assert(wn.sim.golden_silver)
+	var lv_before: int = Game.level
+	var xp_before: int = Game.exp
+	for i in 60:
+		wn.sim.rub_golden(0.04)
+	assert(Game.stats["silver_caught"] >= 1)
+	assert(Game.level > lv_before or Game.exp > xp_before)  # 은빛 = 경험치
+	assert(Game.medals_owned.has("moonlight"))
+	Game.playtime = save_pt
+	print("[SMOKE] 밤/은빛 OK")
+
+	# 14) v3.2 — 로토 3점 + 마왕성 이중 열쇠
+	Game.add_exp(500000)  # Lv 10+ 보장
+	Game.sword_rock = 1
+	main._spawn_sword_rock(true)
+	var sr: Interactable = null
+	var rsh: Interactable = null
+	for n in get_tree().get_nodes_in_group("hoverable"):
+		if n is Interactable and n.kind == "swordrock":
+			sr = n
+	assert(sr != null)
+	main._bump_swordrock(sr)
+	assert(Game.sword_rock == 2)
+	assert(Game.weapon_name(0).begins_with("전설의 검"))
+	# 동굴 지배자 → 방패 / 수중 지배자 → 투구 (직접 격파 처리)
+	Game.posters_f[2] = 3
+	main._on_boss_defeated(2)
+	await get_tree().create_timer(0.5).timeout
+	assert(Game.medals_owned.has("pack_hunter") and Game.medals_owned.has("duel_manner"))
+	for n in get_tree().get_nodes_in_group("hoverable"):
+		if n is Interactable and n.kind == "rotoshield":
+			rsh = n
+	assert(rsh != null)
+	main._bump_rotoshield(rsh)
+	assert(Game.roto_shield)
+	main._on_boss_defeated(3)
+	await get_tree().create_timer(0.5).timeout
+	assert(Game.roto_helm and Game.roto_complete())
+	assert(Game.medals_owned.has("clairvoyance"))
+	assert(Game.weapon_name(0) == "전설의 검·진")
+	print("[SMOKE] 로토 3점 OK — %s" % Game.weapon_name(0))
+
+	# 15) v3.2 — 수중 필드 (물고기화) + 우물/집 + 칭호
+	main.swap_field(3)
+	await get_tree().create_timer(1.2).timeout
+	assert(main.party.underwater)
+	main.swap_field(0)
+	await get_tree().create_timer(1.2).timeout
+	assert(not main.party.underwater)
+	# 부흥 단계가 올라 우물이 있어야 한다 (합류 인원 다수)
+	assert(main.join_count() >= 7)
+	await get_tree().create_timer(2.0).timeout  # 재건축 대기
+	var well: Interactable = null
+	var home: Interactable = null
+	for n in get_tree().get_nodes_in_group("hoverable"):
+		if n is Interactable and n.kind == "well":
+			well = n
+		elif n is Interactable and n.kind == "home":
+			home = n
+	assert(home != null)
+	main._bump_home(home)
+	if well != null:
+		main._bump_well(well)
+		assert(Game.stats["wells"] >= 1)
+	# 칭호 — 통계 강제 충족 후 폴링 대기 (칭호 1틱 + 훈장 1틱)
+	Game.stats["inn_rests"] = 10
+	await get_tree().create_timer(3.5).timeout
+	assert(Game.titles.size() >= 1)
+	assert(Game.medals_owned.has("late_sleep"))
+	print("[SMOKE] 수중/우물/집/칭호 OK — 칭호 %s" % str(Game.titles))
+
+	# 16) v3.2 — 카지노 운 트리 (코인 결제)
+	Game.coins += 500
+	main.hud.open_casino()
+	main.hud._casino_buy_up("jackpot", 60)
+	assert(Game.casino_up["jackpot"] == 1)
+	main.hud._casino_buy_up("hold", 150)
+	assert(Game.casino_up["hold"] == 1)
+	main.hud.close_menu()
+	print("[SMOKE] 카지노 운 트리 OK")
+
+	# 11) 세이브/로드 (v6 — 이름/작전/로토/칭호/통계/카지노 운)
+	Game.hero_name = "테스트용사"
 	var owned_n: int = Game.companion_count()
 	var pids: Array = Game.party_ids.duplicate()
+	var titles_n: int = Game.titles.size()
+	var pots_n: int = int(Game.stats["pots"])
 	Game.save_game()
 	Game.load_game()
 	assert(Game.companion_count() == owned_n)
 	assert(Game.party_ids == pids)
 	assert(int(Game.companion_weapons.get("warrior", 0)) == 3)
 	assert(Game.deposit == dep_before)
-	print("[SMOKE] 세이브/로드 OK (v5)")
+	assert(Game.hero_name == "테스트용사")
+	assert(Game.roto_complete())
+	assert(Game.titles.size() == titles_n)
+	assert(int(Game.stats["pots"]) == pots_n)
+	assert(Game.casino_up["hold"] == 1)
+	print("[SMOKE] 세이브/로드 OK (v6)")
 	print("[SMOKE] 전부 통과!")
 	get_tree().quit()
 

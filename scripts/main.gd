@@ -60,7 +60,7 @@ const RESIDENTS := [
 	{"id": "gambler",  "name": "도박사",   "building": "casino",    "cond": {"gold": 1500, "lv": 6},
 		"ask": "판돈이 모이는 곳에 내가 있지. (Lv 6부터)", "join": "도박사가 천막을 쳤다!"},
 ]
-const REVIVAL_STEPS := [3, 6]   # 주민 수 임계 → 마을 물리 확장
+const REVIVAL_STEPS := [3, 7, 10, 15]   # v3.2 §D: 합류 인원(주민+동료, 용사 제외) 임계 → 마을 물리 확장
 
 var base_root: Node2D        # 마을 (불변 영역)
 var field_root: Node2D       # 필드 (우⅔ — 이정표로 통째 교체)
@@ -88,6 +88,11 @@ var _chief_wiped := false
 var _interest_timer := 30.0    # 은행 이자 틱
 var _requiem_timer := 0.0      # 스님의 성불 — 유령 자동 부활
 var _cave_voice_done := false  # 동굴 벽 목소리 (세션당 1회)
+# v3.2
+var _night_shade: ColorRect = null   # 필드 밤 장막
+var _was_night := false              # 밤낮 경계 알림
+var _fish_voice_done := false        # 수중 진입 연출 (세션당 1회)
+var _polter_timer := 0.0             # 폴터가이스트 틱
 
 # ================================================================ setup
 
@@ -134,10 +139,27 @@ func _ready() -> void:
 
 func _prologue() -> void:
 	if Game.total_earned > 0 or Game.level > 1:
+		if Game.hero_name == "":
+			Game.hero_name = "늦잠꾸러기"  # 진행 중 세이브 안전망
 		return
-	hud.toast("『일어나렴, 용사야.』", 3.0)
+	# v3.2 §B-4: 게임 시작 = 이름 짓기. 그 다음에야 어머니가 깨운다
+	if Game.hero_name == "" and OS.get_environment("AAA_SMOKE") != "1":
+		party.frozen = true
+		hud.show_name_input(func(n: String):
+			Game.hero_name = n
+			Game.save_game()
+			party.frozen = false
+			_prologue_lines())
+	else:
+		if Game.hero_name == "":
+			Game.hero_name = "늦잠꾸러기"
+		_prologue_lines()
+
+func _prologue_lines() -> void:
+	party.teleport(Vector2(96, 100))  # 용사의 집 앞에서 시작 (프롤로그의 발원지)
+	hud.toast("『일어나렴, %s.』" % Game.hn(), 3.0)
 	get_tree().create_timer(3.4).timeout.connect(func():
-		hud.toast("용사는 일어났다. 그러나, 너무 늦었다.", 3.6))
+		hud.toast("%s은(는) 일어났다. 그러나, 너무 늦었다." % Game.hn(), 3.6))
 	get_tree().create_timer(7.6).timeout.connect(func():
 		if not Game.ui_unlocked["desc"]:
 			hud.toast("WASD — 촌장에게 가 보자. (Space)", 4.0))
@@ -149,7 +171,7 @@ func _build_village() -> void:
 		c.queue_free()
 	base_nodes.erase("chief")
 	var stage := _revival_stage()
-	# 마을 바닥 — 부흥 단계에 따라 광장이 자란다
+	# 마을 바닥 — 부흥 단계에 따라 광장이 자란다 (v3.2: 4단계)
 	_repeat_sprite(base_root, "res://assets/Tiles/Grass_Middle.png", Rect2(0, 0, VILLAGE_W, ROOM.y), Vector2.ZERO, Color(1, 1, 1))
 	var plaza := Rect2(56, 116, 108, 160)
 	if stage >= 1:
@@ -157,24 +179,34 @@ func _build_village() -> void:
 	if stage >= 2:
 		plaza = Rect2(12, 48, 196, 276)
 	_repeat_sprite(base_root, "res://assets/Tiles/Path_Middle.png", Rect2(0, 0, plaza.size.x, plaza.size.y), plaza.position, Color(1, 1, 1))
-	if stage >= 2:
-		# 성벽 (임시 도형)
+	if stage >= 3:
+		# 성벽 일부 (임시 도형) — 4단계에 완성
 		var wall := Line2D.new()
-		wall.points = PackedVector2Array([Vector2(6, 40), Vector2(6, 340), Vector2(210, 340)])
+		wall.points = PackedVector2Array([Vector2(6, 40), Vector2(6, 340), Vector2(210, 340)]) if stage >= 4 \
+			else PackedVector2Array([Vector2(6, 120), Vector2(6, 340)])
 		wall.width = 3.0
 		wall.default_color = Color("6a5a40")
 		base_root.add_child(wall)
-	for p in [Vector2(28, 40), Vector2(190, 320)]:
+		if stage >= 4:
+			var wall2 := Line2D.new()
+			wall2.points = PackedVector2Array([Vector2(9, 43), Vector2(9, 337), Vector2(207, 337)])
+			wall2.width = 1.0
+			wall2.default_color = Color("8a7a58")
+			base_root.add_child(wall2)
+	for p in [Vector2(28, 320), Vector2(190, 320)]:
 		_decor(base_root, "res://assets/objects/forest.png", p, Color(1, 1, 1))
-	# 시작 멤버: 촌장 + 항아리 둘 + "보이는데 못 여는 것" (잠긴 창고·붉은 상자)
+	# 시작 멤버: 용사의 집+엄마 + 촌장 + 항아리 둘 + "보이는데 못 여는 것" (잠긴 창고·붉은 상자)
+	base_nodes["home"] = _add_thing(base_root, "home", Vector2(76, 52))
+	_add_thing(base_root, "mom", Vector2(102, 58))
 	base_nodes["chief"] = _add_thing(base_root, "chief", Vector2(100, 148))
-	_add_thing(base_root, "warehouse", Vector2(40, 48))
+	_add_thing(base_root, "warehouse", Vector2(34, 48))
 	_add_thing(base_root, "redchest", Vector2(186, 48))
 	var pot_n: int = mini(2 + Game.extra_pots * 2, POT_SPOTS.size())
 	for i in pot_n:
 		_add_thing(base_root, "pot", POT_SPOTS[i])
 	if stage >= 2:
-		_add_thing(base_root, "fountain", Vector2(108, 74))
+		_add_thing(base_root, "fountain", Vector2(108, 84))
+		_add_thing(base_root, "well", Vector2(160, 96))  # 우물 (v3.2 §B-9)
 	# 영입된 주민들의 시설 + 주민 본인
 	for r in RESIDENTS:
 		if Game.residents.get(r["id"], false):
@@ -198,8 +230,12 @@ func _place_resident(r: Dictionary, pop: bool) -> void:
 		var npc := _add_thing(base_root, "resident", BUILD_POS[b] + Vector2(24, 12))
 		npc.resident_name = r["name"]
 
+func join_count() -> int:
+	# v3.2 §D: 합류 = 주민 + 동료 통합 (용사 제외. 촌장·엄마는 기본 거주자라 카운트 제외)
+	return Game.resident_count() + Game.companion_count() - 1
+
 func _revival_stage() -> int:
-	var n := Game.resident_count()
+	var n := join_count()
 	var s := 0
 	for t in REVIVAL_STEPS:
 		if n >= t:
@@ -240,6 +276,7 @@ func _build_field(f: int) -> void:
 		c.queue_free()
 	boss_node = null
 	last_field = f
+	Game.current_field = f
 	var tint: Color = Game.FIELD_TINTS[f]
 	_repeat_sprite(field_root, "res://assets/Tiles/Grass_Middle.png", Rect2(0, 0, ROOM.x - VILLAGE_W, ROOM.y), Vector2(VILLAGE_W, 0), tint)
 	var decor_tex := "res://assets/objects/forest.png" if f <= 1 else "res://assets/objects/hill.png"
@@ -249,12 +286,25 @@ func _build_field(f: int) -> void:
 		decor_n = 4
 	for i in decor_n:
 		_decor(field_root, decor_tex, Vector2(randf_range(260, 560), randf_range(48, 316)), tint)
+	# 밤 장막 — 필드만 어두워진다. 마을은 물들지 않는다 (v3.2 §B-5)
+	_night_shade = ColorRect.new()
+	_night_shade.color = Color(0.05, 0.07, 0.2, 0.0)
+	_night_shade.position = Vector2(VILLAGE_W, 0)
+	_night_shade.size = Vector2(ROOM.x - VILLAGE_W, ROOM.y)
+	_night_shade.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_night_shade.z_index = 50
+	field_root.add_child(_night_shade)
 	# 행선지 이정표 — 첫 지배자를 쓰러뜨리면 나타난다
 	if Game.signpost_seen:
 		base_nodes["signpost"] = _add_thing(field_root, "signpost", Vector2(228, 190))
 	# 검이 꽂힌 바위 (서사시 제 2절의 사건 — 어느 필드에서든 보인다)
 	if Game.sword_rock >= 1:
 		_spawn_sword_rock(false)
+	# 로토의 방패 — 동굴 지배자를 쓰러뜨린 자리에 남는다 (v3.2 §B-7)
+	if Game.bosses_defeated[2] and not Game.roto_shield:
+		_add_thing(field_root, "rotoshield", Vector2(430, 120))
+	# 수중 = 전원 물고기화 (v3.2 §B-1)
+	party.set_underwater(f == 3)
 	_spawn_boss(f)
 	_add_thing(field_root, "cheatpot", Vector2(560, 300))  # DEBUG: 보스 근처 치트 항아리 — 클릭/Space마다 +1000 G (나중에 이 줄만 지우면 됨)
 	for i in 7:
@@ -287,6 +337,11 @@ func _field_arrival_voice(f: int) -> void:
 		_cave_voice_done = true
 		Sfx.play("voice")
 		hud.event("…동굴 벽에서 목소리가 스민다. 「기도와… 침대가… 벽을 넘게 하리라…」", 6.0)
+	# 수중 진입 (v3.2 §B-1 — 드퀘11 오마주)
+	if f == 3 and not _fish_voice_done:
+		_fish_voice_done = true
+		Sfx.play("warp", 1.4)
+		hud.event("일행은 물고기가 되었다!! …헤어스타일은 그대로다.", 5.0)
 
 func _spawn_sword_rock(pop: bool) -> void:
 	var sr := _add_thing(field_root, "swordrock", Vector2(300, 72))
@@ -337,6 +392,13 @@ func _process(delta: float) -> void:
 		_check_residents_auto()
 		_check_recruits()
 		_update_chief_alert()
+		_check_revival()
+		_check_titles_and_medals()
+		# 작전 명령 해금 — 2장(숲) + 여관 (v3.2 §D)
+		if not Game.tactic_known and Game.buildings["inn"] and Game.fields_unlocked[1]:
+			Game.tactic_known = true
+			Sfx.play("fanfare")
+			hud.event("여관 주인: 「일행에게 「작전」 을 내려 보시죠. 여관 메뉴에 적어 뒀습니다.」", 5.5)
 
 	_save_timer -= delta
 	if _save_timer <= 0.0:
@@ -366,6 +428,7 @@ func _process(delta: float) -> void:
 				if Game.members[i]["ghost"]:
 					Game.members[i]["ghost"] = false
 					Game.members[i]["hp"] = maxi(1, int(Game.members[i]["max_hp"] * 0.3))
+					Game.add_stat("requiems")
 					Game.member_changed.emit(i)
 					Game.party_changed.emit()
 					Sfx.play("revive")
@@ -376,6 +439,43 @@ func _process(delta: float) -> void:
 	# 도적의 귀환 (서사시 제 4절의 드라마)
 	if Game.thief_away and Game.playtime >= Game.thief_return_at:
 		_thief_return()
+
+	# ---------- v3.2 ----------
+	# 밤낮 — 필드 장막 + 경계 알림 (마을은 물들지 않는다)
+	if _night_shade != null and is_instance_valid(_night_shade):
+		_night_shade.color.a = 0.38 * Game.night_frac()
+	var night := Game.is_night()
+	if night != _was_night:
+		_was_night = night
+		hud._update_top()
+		if Game.clock_on():
+			Sfx.play("voice" if night else "heal", 1.2)
+			if night:
+				hud.event("밤이 왔다. 몬스터가 사나워지고… 은빛 무언가가 돌아다닌다.", 4.5)
+			else:
+				hud.event("아침이 왔다. %s의 하루가 다시 시작된다." % Game.hn(), 3.5)
+	# 폴터가이스트 — 유령이 지나가는 항아리를 깨뜨린다
+	if Game.medal_on("poltergeist") and Game.ghost_count() > 0:
+		_polter_timer -= delta
+		if _polter_timer <= 0.0:
+			_polter_timer = 0.8
+			for n in get_tree().get_nodes_in_group("hoverable"):
+				if n is Interactable and n.kind == "pot" and n.is_ready \
+						and party.head_pos.distance_to(n.global_position) < 26.0:
+					_bump_pot(n)
+					break
+	# 천리안 — 주시 중인 창의 이웃에게 절반 효과
+	if Game.medal_on("clairvoyance"):
+		var docked: Array = []
+		for w in windows:
+			if is_instance_valid(w) and not w.closing and not w.is_boss and w.sim != null:
+				docked.append(w)
+		var hov := -1
+		for i in docked.size():
+			if docked[i].sim.hovered:
+				hov = i
+		for i in docked.size():
+			docked[i].sim.hovered_adj = hov >= 0 and absi(i - hov) == 1
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST:
@@ -489,6 +589,7 @@ func _fire_combo() -> void:
 		return
 	Game.combo_gauge = 0.0
 	party.combo_glow = false
+	Game.add_stat("combos")
 	Sfx.play("combo")
 	hud.show_cutin(String(cd["cutin"]), String(cd["tex"]), String(cd["fallback"]), cd["tint"])
 	# 컷인 직후 필드의 모든 전투창을 휩쓴다
@@ -564,7 +665,8 @@ func _companion_walkin(id: String, join_msg: String) -> void:
 	var tw := create_tween()
 	tw.tween_property(walker, "position", party.head_pos, 2.0)
 	tw.tween_callback(func():
-		walker.queue_free()
+		if walker != null and is_instance_valid(walker):
+			walker.queue_free()
 		Game.own_companion(id)
 		Sfx.play("fanfare_big")
 		hud.event(join_msg, 4.0)
@@ -744,6 +846,15 @@ func _on_bump(node: Node2D) -> void:
 			_bump_frogstatue(it)
 		"swordrock":
 			_bump_swordrock(it)
+		"home":
+			_bump_home(it)
+		"mom":
+			Sfx.play("bump")
+			hud.event("엄마: 「%s, 밥은 먹고 다니니?」" % Game.hn(), 3.5)
+		"well":
+			_bump_well(it)
+		"rotoshield":
+			_bump_rotoshield(it)
 		"resident":
 			Sfx.play("bump")
 			hud.event("%s: 「좋은 마을이 되어 가는군요.」" % it.resident_name)
@@ -760,6 +871,74 @@ func _bump_frogstatue(it: Interactable) -> void:
 	var moved := Game.bank_deposit(spare)
 	Sfx.play("bank")
 	hud.popup("개굴! +%d G 예금" % moved, it.global_position, UILib.COL_GOLD)
+
+const MOM_LETTERS := [
+	"「반찬 남기지 말고. — 엄마가」",
+	"「촌장님 말씀 잘 듣고 있니? — 엄마가」",
+	"「마왕이든 뭐든, 저녁엔 들어와. — 엄마가」",
+	"「네가 자는 동안에도 엄마는 네 편이었어.」",
+]
+
+func _bump_home(it: Interactable) -> void:
+	# 용사의 집 (v3.2 §B-6) — 쿨타임마다 랜덤 1종: 도시락/편지/용돈
+	Sfx.play("bump")
+	if not it.is_ready:
+		hud.event("%s의 집. …엄마 생각이 난다." % Game.hn(), 3.0)
+		return
+	it.start_cooldown(75.0)
+	match randi() % 3:
+		0:
+			Game.lunch_until = Game.playtime + 90.0
+			Sfx.play("heal")
+			hud.event("엄마의 도시락이다! 힘이 난다. (잠시 공격력 +10%)", 4.5)
+		1:
+			Sfx.play("blip", 0.8)
+			hud.event("편지가 놓여 있다. %s" % MOM_LETTERS[randi() % MOM_LETTERS.size()], 5.0)
+		2:
+			var g := maxi(3, int(8 * Game.gold_scale()))
+			_gain_gold(g, it.global_position, "coin", 2)
+			hud.event("베개 밑에 용돈이…! 엄마는 다 알고 있다.", 4.0)
+
+func _bump_well(it: Interactable) -> void:
+	# 우물 (v3.2 §B-9) — 들여다본다: 골드 / 메달 / …뭔가 있다
+	if not it.is_ready:
+		return
+	Game.add_stat("wells")
+	it.start_cooldown(40.0)
+	var roll := randf()
+	if roll < 0.06 and not _windows_full():
+		Sfx.play("boss")
+		hud.event("우물 안에 뭔가 있다…!!", 3.0)
+		var t := Game.progress_tier()
+		var def := {
+			"id": "well_thing", "name": "우물의 그것",
+			"hp": int(30 * Game.tier_stat(t)), "atk": int(7 * Game.tier_atk(t)),
+			"gold": int(150 * Game.tier_gold(t)), "exp": int(30 * Game.tier_exp(t)),
+			"tex": "res://assets/enemies/bat.png", "scale": 1.0, "tint": Color(0.5, 0.6, 0.8),
+		}
+		_open_battle([def], false)
+		return
+	if roll < 0.16:
+		Game.medals_small += 1
+		Sfx.play("golden", 1.3)
+		hud.popup("작은 메달!", it.global_position + Vector2(0, -14), UILib.COL_GOLD)
+		return
+	var g := maxi(1, int(randi_range(4, 12) * Game.gold_scale() * Game.gold_multiplier()))
+	_gain_gold(g, it.global_position, "coin", 2)
+
+func _bump_rotoshield(it: Interactable) -> void:
+	# 로토의 방패 (v3.2 §B-7 — 지배자가 지키던 두 번째 조각)
+	Game.roto_shield = true
+	Sfx.play("fanfare_big")
+	hud.event("「로토의 방패」 를 손에 넣었다! %s의 몸이 빛난다… (%d/3)" % [Game.hn(), Game.roto_count()], 5.5)
+	party._rebuild_sprites()
+	it.queue_free()
+	Game.save_game()
+
+func vip_spawn() -> void:
+	# 카지노 VIP 카드 — 슬롯의 몬스터가 필드에 실체화 (v3.2 조건형)
+	_spawn_monster(last_field)
+	hud.event("슬롯에서 튀어나온 몬스터가 필드에 나타났다?!", 3.5)
 
 func _bump_swordrock(it: Interactable) -> void:
 	if Game.sword_rock >= 2:
@@ -860,16 +1039,27 @@ func _bump_monster(m: FieldMonster) -> void:
 	if last_field == 2:
 		count = maxi(count, randi_range(1, Game.max_enemies_per_window()))
 	elif last_field == 3:
-		count = 1
+		count = 1  # 수중 정예는 홀로 다닌다
 	var defs: Array = []
-	for i in count:
-		defs.append(m.def)
+	if Game.medal_on("duel_manner"):
+		# 일기토의 예법 — 모든 조우가 정예 1마리, 보상 집중 (v3.2 양날형)
+		var elite: Dictionary = m.def.duplicate()
+		elite["name"] = "정예 " + String(elite["name"])
+		elite["hp"] = int(elite["hp"] * 1.8)
+		elite["atk"] = int(elite["atk"] * 1.3)
+		elite["gold"] = int(elite["gold"] * 2.5)
+		elite["exp"] = int(elite["exp"] * 2.5)
+		defs = [elite]
+	else:
+		for i in count:
+			defs.append(m.def)
 	m.queue_free()
 	_open_battle(defs, false)
 
 func _bump_pot(it: Interactable) -> void:
 	if not it.is_ready:
 		return
+	Game.add_stat("pots")
 	var cracked := Game.medal_on("cracked_pot")
 	var g := maxi(1, int(randi_range(3, 8) * Game.gold_scale() * Game.gold_multiplier() * (0.5 if cracked else 1.0)))
 	_gain_gold(g, it.global_position, "pot", 2)
@@ -910,9 +1100,18 @@ func _bump_sparkle(it: Interactable) -> void:
 	_dig_sparkle(it)
 
 func _dig_sparkle(it: Interactable) -> void:
+	Game.add_stat("digs")
 	var g := maxi(1, int(randi_range(8, 20) * Game.gold_scale() * Game.gold_multiplier()))
+	# 광부의 곡괭이 + 어부 형의 낚시 (수중 각성 ×2, 후미의 긍지 적용)
+	g = int(g * (1.0 + 0.3 * Game.passive_scale("pickaxe")))
+	var fish_s := Game.passive_scale("fish")
+	if fish_s > 0.0 and randf() < 0.25 * fish_s:
+		var bonus := maxi(1, int(g * 0.6))
+		g += bonus
+		hud.event("어부 형이 물고기를 낚아 올렸다! +%d G" % bonus, 2.5)
+	var medal_chance := 0.10 + 0.05 * Game.passive_scale("pickaxe")
 	_gain_gold(g, it.global_position, "dig", 2)
-	_maybe_drop_medal(it.global_position, 0.10)
+	_maybe_drop_medal(it.global_position, medal_chance)
 	it.queue_free()
 
 func _gain_gold(g: int, world_pos: Vector2, sfx_name: String, coins_n: int) -> void:
@@ -1074,13 +1273,58 @@ func join_resident(r: Dictionary) -> void:
 	var tw := create_tween()
 	tw.tween_property(walker, "position", BUILD_POS[r["building"]], 2.2)
 	tw.tween_callback(func():
-		walker.queue_free()
-		_place_resident(r, true)
+		# 걷는 도중 부흥 재건축(_build_village)이 끼어들면 walker/시설이 이미 처리돼 있다
+		if walker != null and is_instance_valid(walker):
+			walker.queue_free()
+		var b: String = r["building"]
+		if not (base_nodes.has(b) and is_instance_valid(base_nodes[b])):
+			_place_resident(r, true)
 		Sfx.play("build")
 		hud.event(r["join"], 4.0)
 		_resident_companion(r["id"])
 		_check_revival()
 		Game.save_game())
+
+# ================================================================ 칭호 + 도전과제식 훈장 (v3.2 §B-8, §C)
+
+func _grant_medal(id: String) -> void:
+	if Game.own_medal(id):
+		Sfx.play("fanfare_big")
+		hud.event("훈장 「%s」 을 손에 넣었다!" % Game.MEDAL_DEFS[id]["name"], 4.5)
+		Game.save_game()
+
+func _check_titles_and_medals() -> void:
+	# 칭호 — 한 틱에 하나 (의식은 겹치지 않는다)
+	var t: Dictionary = Game.check_titles()
+	if not t.is_empty():
+		Sfx.play("fanfare")
+		hud.event("칭호 획득 — 「%s」! 촌장이 알면 좋아하겠다." % t["name"], 4.5)
+		Game.save_game()
+		return
+	# 통계 연동 훈장 (도전과제식 — 획득처가 곧 플레이 습관)
+	var s: Dictionary = Game.stats
+	if int(s["mimic_wins"]) >= 10 and not Game.medals_owned.has("mimic_teeth"):
+		_grant_medal("mimic_teeth")
+	elif int(s["pots"]) >= 1000 and not Game.medals_owned.has("cracked_pot"):
+		_grant_medal("cracked_pot")
+	elif int(s["flees"]) >= 10 and not Game.medals_owned.has("coward_flag"):
+		_grant_medal("coward_flag")
+	elif int(s["golden_caught"]) >= 10 and not Game.medals_owned.has("metal_crown"):
+		_grant_medal("metal_crown")
+	elif int(s["inn_rests"]) >= 10 and not Game.medals_owned.has("late_sleep"):
+		_grant_medal("late_sleep")
+	elif int(s["revives"]) >= 5 and not Game.medals_owned.has("martyr"):
+		_grant_medal("martyr")
+	elif int(s["requiems"]) >= 1 and not Game.medals_owned.has("poltergeist"):
+		_grant_medal("poltergeist")
+	elif Game.titles.size() >= 3 and not Game.medals_owned.has("attendance"):
+		_grant_medal("attendance")
+	elif Game.companions_owned.get("fisher_a", false) and Game.companions_owned.get("fisher_b", false) \
+			and not Game.medals_owned.has("fisher_pride"):
+		_grant_medal("fisher_pride")
+	elif Game.residents.get("father", false) and Game.up["heal_eye"] > 0 \
+			and not Game.medals_owned.has("holy_pendant"):
+		_grant_medal("holy_pendant")
 
 func _resident_companion(rid: String) -> void:
 	# 주민-동료 연동 (v3.1 §B-3) — 시설의 화신이 곧 객원 동료다
@@ -1097,18 +1341,28 @@ func _resident_companion(rid: String) -> void:
 			else:
 				hud.event("%s이(가) 동행을 자청한다! (여관 → 파티 편성)" % cname, 4.5))
 
+var _last_revival_stage := -1
+
 func _check_revival() -> void:
-	# 주민 수 임계점 → 마을이 물리적으로 확장된다
-	var n := Game.resident_count()
-	if n in REVIVAL_STEPS:
+	# 합류 인원 임계점 → 마을이 물리적으로 확장된다 (v3.2: 4단계)
+	var s := _revival_stage()
+	if _last_revival_stage < 0:
+		_last_revival_stage = s
+		return
+	if s > _last_revival_stage:
+		_last_revival_stage = s
 		Sfx.play("palette")
+		var msgs := [
+			"마을이 살아나기 시작했다! 광장이 넓어졌다.",
+			"마을에 분수와 우물이 생겼다! 엄마도 부엌에 불을 지폈다.",
+			"성벽이 올라가기 시작한다! …큰돈의 냄새를 맡은 자가 있다던데.",
+			"성벽이 완성됐다! 마을은 이제 도시라 불러도 좋다.",
+		]
+		var msg: String = msgs[clampi(s - 1, 0, msgs.size() - 1)]
 		get_tree().create_timer(1.2).timeout.connect(func():
 			_build_village()
 			Sfx.play("fanfare_big")
-			if n == REVIVAL_STEPS[0]:
-				hud.event("마을이 살아나기 시작했다! 광장이 넓어졌다.", 5.0)
-			else:
-				hud.event("마을에 분수가 솟았다! 성벽도 올라간다.", 5.0))
+			hud.event(msg, 5.0))
 
 # ================================================================ 전투창 (도킹)
 
@@ -1139,6 +1393,7 @@ func _open_battle(defs: Array, boss: bool) -> void:
 	sim.victory.connect(_on_victory.bind(w, boss))
 	sim.member_hit.connect(_on_member_hit_fx.bind(w))
 	sim.golden_captured.connect(_on_golden_captured.bind(w))
+	sim.golden_escaped.connect(_on_golden_escaped_stat)
 	_relayout_windows()
 	# 공개 스케줄 3: 첫 전투창 → 파티 스테이터스 창의 탄생
 	if not Game.ui_unlocked["party"]:
@@ -1181,19 +1436,47 @@ func _on_victory(gold_reward: int, exp_reward: int, w: BattleWindow, boss: bool)
 func _on_flee(w: BattleWindow) -> void:
 	# 퇴각 나팔 — 보상 없이 창을 접는다 (v3.1 §B-7-6)
 	if is_instance_valid(w) and not w.closing:
+		Game.add_stat("flees")
 		hud.event("일행은 도망쳤다! …부끄럽지 않다. 전략이다.", 2.5)
 		w.close_after(0.0)
 
-func _on_member_hit_fx(idx: int, dmg: int, _fell: bool, w: BattleWindow) -> void:
+func _on_member_hit_fx(idx: int, dmg: int, fell: bool, w: BattleWindow) -> void:
 	if is_instance_valid(w):
 		hud.fly_damage(w.position + Vector2(randf_range(20, w.size.x - 20), w.size.y - 30), idx, dmg)
+	# 순교자의 성표 — 쓰러지는 순간, 전 창에 폭발 (v3.2 유령 계열)
+	if fell and Game.medal_on("martyr"):
+		Sfx.play("crit", 0.7)
+		hud.event("%s의 혼이 폭발했다!!" % Game.members[idx]["name"], 3.0)
+		var blast: int = maxi(4, Game.member_atk(idx) * 3)
+		for bw in windows:
+			if is_instance_valid(bw) and not bw.closing and bw.sim != null and not bw.sim.finished:
+				for ei in bw.sim.alive_enemies():
+					bw.sim._apply_enemy_damage(ei, blast, true, false)
 
 func _on_golden_captured(reward: int, w: BattleWindow) -> void:
+	if is_instance_valid(w) and w.sim != null and w.sim.golden_silver:
+		# 은빛 슬라임 (밤) — 경험치를 남긴다 (v3.2 §B-5)
+		Game.add_stat("silver_caught")
+		Sfx.play("capture", 0.8)
+		hud.fly_xp(w.position + w.size / 2.0, 5)
+		if Game.add_exp(reward):
+			hud.levelup_ritual(Game.level)
+		hud.event("은빛 슬라임을 붙잡았다! 경험치가 쏟아진다!", 3.5)
+		if not Game.medals_owned.has("moonlight"):
+			_grant_medal("moonlight")  # 달빛 훈장 — 첫 포획의 증표
+		return
+	Game.add_stat("golden_caught")
 	Game.add_gold(reward)
 	Sfx.play("gold_big")
 	if is_instance_valid(w):
 		hud.coin_burst(w.position + w.size / 2.0, 8)
 	hud.event("황금 슬라임을 붙잡았다! +%d G!" % reward, 3.5)
+
+func _on_golden_escaped_stat() -> void:
+	Game.add_stat("golden_missed")
+	# 끈끈이 장갑 — 놓쳐 본 자에게 주어지는 위로 (v3.2 §C)
+	if Game.up["golden_hands"] > 0 and not Game.medals_owned.has("sticky_gloves"):
+		_grant_medal("sticky_gloves")
 
 func _close_all_windows() -> void:
 	for w in windows.duplicate():
@@ -1218,7 +1501,12 @@ func _try_spawn_golden() -> void:
 		dur *= 0.6
 	if Game.medal_on("sticky_gloves"):
 		dur += 2.0
-	w.sim.spawn_golden(dur)
+	# 밤에는 황금 대신 은빛이 온다 (v3.2 §B-5 — 밤을 기다릴 이유)
+	var silver := Game.is_night()
+	w.sim.spawn_golden(dur, silver)
+	if silver and not Game.silver_seen:
+		Game.silver_seen = true
+		hud.event("은빛 슬라임…?! 밤에만 나타나는 놈이다!", 4.0)
 	Game.golden_first_done = true
 	var interval := randf_range(150.0, 300.0) * (0.5 if Game.golden_info else 1.0)
 	if Game.medal_on("metal_crown"):
@@ -1231,16 +1519,19 @@ func _field_def(field: int, mtier: int, x: float) -> Dictionary:
 	var base: Dictionary = Game.MONSTER_DEFS[mtier]
 	var t := field + 1
 	var xf := 0.75 + ((x - VILLAGE_W) / (ROOM.x - VILLAGE_W)) * 0.6
-	var elite: bool = field == 3
+	var elite: bool = field == 3  # 수중 = 정예의 땅 (어류는 억세다)
+	# 밤 = 몬스터 강화 + 보상 상승 (v3.2 §B-5)
+	var night_hp := 1.3 if Game.is_night() else 1.0
+	var night_gold := 1.5 if Game.is_night() else 1.0
 	return {
 		"id": base["id"],
-		"name": Game.FIELD_PREFIX[field] + String(base["name"]),
-		"hp": int(base["hp"] * Game.tier_stat(t) * xf * (1.6 if elite else 1.0)),
-		"atk": int(maxf(1.0, base["atk"] * Game.tier_atk(t) * xf * (1.3 if elite else 1.0))),
-		"gold": int(base["gold"] * Game.tier_gold(t) * xf * (1.8 if elite else 1.0) * (1.0 + 0.4 * int(field == 2))),
-		"exp": int(maxf(1.0, base["exp"] * Game.tier_exp(t) * xf)),
+		"name": ("밤 " if Game.is_night() else "") + Game.FIELD_PREFIX[field] + String(base["name"]),
+		"hp": int(base["hp"] * Game.tier_stat(t) * xf * (1.6 if elite else 1.0) * night_hp),
+		"atk": int(maxf(1.0, base["atk"] * Game.tier_atk(t) * xf * (1.3 if elite else 1.0) * (1.2 if Game.is_night() else 1.0))),
+		"gold": int(base["gold"] * Game.tier_gold(t) * xf * (1.8 if elite else 1.0) * (1.0 + 0.4 * int(field == 2)) * night_gold),
+		"exp": int(maxf(1.0, base["exp"] * Game.tier_exp(t) * xf * (1.3 if Game.is_night() else 1.0))),
 		"tex": base["tex"], "scale": 1.0,
-		"tint": Game.FIELD_TINTS[field],
+		"tint": Game.FIELD_TINTS[field].darkened(0.25) if Game.is_night() else Game.FIELD_TINTS[field],
 	}
 
 func _spawn_monster(f: int) -> void:
@@ -1297,9 +1588,13 @@ func _start_boss_battle(m: FieldMonster) -> void:
 		hud.event("결계가 지배자를 지키고 있다. 수배서를 모으자.", 3.5)
 		m.bump_cd = 2.0
 		return
-	if last_field >= 4 and not Game.epic_complete():
+	if last_field >= 4 and not (Game.epic_complete() and Game.roto_complete()):
 		Sfx.play("deny")
-		hud.event("마왕 앞에 보이지 않는 벽이 있다. …이야기의 끝을 알아야 한다. (음유시인)", 4.5)
+		# 이중 열쇠 (v3.2 §B-7): 이야기의 끝 + 로토 3점
+		if not Game.epic_complete():
+			hud.event("마왕 앞에 보이지 않는 벽이 있다. …이야기의 끝을 알아야 한다. (음유시인)", 4.5)
+		else:
+			hud.event("벽이 속삭인다. 「전설의 세 조각을 걸친 자만이…」 (로토 세트 %d/3)" % Game.roto_count(), 4.5)
 		m.bump_cd = 3.0
 		return
 	m.visible = false
@@ -1318,11 +1613,28 @@ func _on_boss_defeated(field: int) -> void:
 		Game.save_game()
 		hud.show_ending(_do_prestige, _do_continue)
 		return
-	var medal_by_field := ["coward_flag", "aqua_regia", "ghost_warcry", "spirit_party"]
+	# v3.2 훈장 재배선: 초원=바람 / 숲=불복종 / 동굴=무리 사냥꾼+일기토 / 수중=천리안
+	var medal_by_field := ["wind_sign", "disobedience", "pack_hunter", "clairvoyance"]
 	var mid: String = medal_by_field[clampi(field, 0, 3)]
 	if Game.own_medal(mid):
 		Sfx.play("fanfare_big")
 		hud.event("훈장 「%s」 을 손에 넣었다!" % Game.MEDAL_DEFS[mid]["name"], 4.5)
+	if field == 2 and Game.own_medal("duel_manner"):
+		get_tree().create_timer(2.0).timeout.connect(func():
+			hud.event("훈장 「일기토의 예법」 도 함께 손에 넣었다!", 4.0))
+	# 로토의 조각 (v3.2 §B-7): 동굴 → 방패가 남는다 / 수중 → 투구 드랍
+	if field == 2 and not Game.roto_shield:
+		var rs := _add_thing(field_root, "rotoshield", Vector2(430, 120))
+		rs.spawn_pop()
+		hud.event("지배자가 지키던 것이… 빛나는 방패다!", 4.5)
+	if field == 3 and not Game.roto_helm:
+		Game.roto_helm = true
+		Sfx.play("fanfare_big")
+		hud.event("「로토의 투구」 를 손에 넣었다! (%d/3)" % Game.roto_count(), 5.0)
+		party._rebuild_sprites()
+		if Game.roto_complete():
+			get_tree().create_timer(2.5).timeout.connect(func():
+				hud.event("세 조각이 모였다… %s의 모습이 전설 그 자체다!" % Game.hn(), 5.5))
 	# 드퀘 열쇠 — 보스가 쥐고 있다 (해금 문법 ⑤)
 	if field == 0 and not Game.keys["thief"]:
 		Game.keys["thief"] = true
@@ -1361,6 +1673,10 @@ func _on_wipe() -> void:
 		return
 	_wipe_lock = true
 	party.frozen = true
+	Game.add_stat("wipes")
+	# 원혼의 함성 — 쓰러져 본 자에게 주어지는 위로 (v3.2)
+	if not Game.medals_owned.has("ghost_warcry"):
+		get_tree().create_timer(4.5).timeout.connect(func(): _grant_medal("ghost_warcry"))
 	Sfx.play("wipe")
 	_close_all_windows()
 	if boss_fighting:
@@ -1387,6 +1703,11 @@ func up_effect(id: String) -> void:
 	Game.up[id] += 1
 	if id == "max_hp":
 		Game.refresh_max_hp()
+	# 탈것 — 이속 트리의 끝은 수치가 아니라 존재의 변화 (v3.2 §B-2)
+	if id == "speed" and Game.mounted():
+		Sfx.play("fanfare_big")
+		party._rebuild_sprites()
+		hud.event("%s에게 탈것이 생겼다!! 대열 전체가 신이 나서 달린다!" % Game.hn(), 6.0)
 	Game.upgrades_changed.emit()
 	Game.save_game()
 

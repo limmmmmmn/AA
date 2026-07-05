@@ -19,8 +19,11 @@ var enemies: Array = []          # {name, letter, hp, max_hp, atk, gold, exp, te
 var is_boss := false
 var finished := false
 var hovered := false             # BattleWindow가 설정 (주시 버프)
+var hovered_adj := false         # 천리안 — 옆 창 주시의 절반 (main이 설정, v3.2)
+var window_tactic := ""          # 이 창의 유효 작전 (임기응변=창마다 랜덤, v3.2 §B-3)
 
 var golden_active := false
+var golden_silver := false       # 밤의 은빛 슬라임 (v3.2 §B-5 — 보상이 다르다)
 var golden_timer := 0.0
 var golden_gauge := 0.0
 
@@ -30,6 +33,7 @@ var _won_pending := false
 
 func setup(defs: Array, boss: bool) -> void:
 	is_boss = boss
+	window_tactic = Game.roll_tactic()
 	enemies = []
 	for i in defs.size():
 		var d: Dictionary = defs[i]
@@ -57,10 +61,40 @@ func alive_enemies() -> Array:
 
 # ---------------------------------------------------------------- tick
 
+# ---------------------------------------------------------------- 작전 (v3.2 §B-3 — 가중치 3세트)
+
+func _tp() -> float:
+	return Game.tactic_power()
+
+func tactic_out_mult() -> float:      # 아군이 주는 데미지
+	match window_tactic:
+		"attack": return 1.0 + 0.15 * _tp()
+		"gold": return maxf(0.55, 1.0 - 0.15 * _tp())
+	return 1.0
+
+func tactic_in_mult() -> float:       # 아군이 받는 데미지
+	match window_tactic:
+		"attack": return 1.0 + 0.2 * _tp()
+		"life": return maxf(0.5, 1.0 - 0.15 * _tp())
+	return 1.0
+
+func tactic_speed_mult() -> float:    # 턴 간격 (작을수록 빠름)
+	match window_tactic:
+		"attack": return maxf(0.6, 1.0 - 0.1 * _tp())
+	return 1.0
+
+func tactic_gold_mult() -> float:
+	match window_tactic:
+		"gold": return 1.0 + 0.25 * _tp()
+		"life": return maxf(0.7, 1.0 - 0.1 * _tp())
+	return 1.0
+
 func tick(delta: float) -> void:
 	if finished:
 		return
 	var speed: float = Game.gaze_speed() if hovered else 1.0
+	if not hovered and hovered_adj:
+		speed = 1.0 + (Game.gaze_speed() - 1.0) * 0.5  # 천리안 — 옆 창 절반
 	# 황금 슬라임 타이머
 	if golden_active:
 		golden_timer -= delta
@@ -70,7 +104,7 @@ func tick(delta: float) -> void:
 			line.emit("도망쳐 버렸다!")
 			golden_escaped.emit()
 	_timer += delta * speed
-	var interval := Game.turn_interval()
+	var interval := Game.turn_interval() * tactic_speed_mult()
 	if _timer < interval:
 		return
 	_timer = 0.0
@@ -105,7 +139,15 @@ func _step() -> void:
 
 func _build_round() -> void:
 	var spirits: bool = Game.medal_on("spirit_party")
+	# 목숨을 소중히 — 사제(기도)가 맨 먼저 움직인다 (v3.2 §B-3)
+	if window_tactic == "life":
+		for i in Game.members.size():
+			if not Game.members[i]["ghost"] and Game.COMPANIONS[Game.members[i]["cls"]]["passive"] == "pray":
+				_queue.append(["m", i])
 	for i in Game.members.size():
+		if window_tactic == "life" and not Game.members[i]["ghost"] \
+				and Game.COMPANIONS[Game.members[i]["cls"]]["passive"] == "pray":
+			continue  # 이미 앞줄에 세웠다
 		if not Game.members[i]["ghost"] or spirits:
 			_queue.append(["m", i])
 	for i in enemies.size():
@@ -155,7 +197,7 @@ func _member_act(idx: int) -> void:
 		line.emit("%s의 공격!" % m["name"])
 		line.emit("미스! 미스!")
 		return
-	var crit_bonus: float = Game.gaze_crit() if hovered else 0.0
+	var crit_bonus: float = Game.gaze_crit() if hovered else (Game.gaze_crit() * 0.5 if hovered_adj else 0.0)
 	if passive == "aoe":
 		line.emit("%s의 주문!" % m["name"])
 		for i in alive.duplicate():
@@ -185,8 +227,13 @@ func _apply_enemy_damage(i: int, dmg: int, crit: bool, log_line: bool) -> void:
 		return
 	# 사냥꾼의 추적 — 수배서에 실리는 상위 몬스터/보스에게 보너스
 	var mid_t: String = String(e.get("mid", ""))
-	if Game.passive_on("track") and (is_boss or mid_t == "angry" or mid_t == "cyclops"):
-		dmg = int(dmg * 1.25)
+	var track_s := Game.passive_scale("track")
+	if track_s > 0.0 and (is_boss or mid_t == "angry" or mid_t == "cyclops"):
+		dmg = int(dmg * (1.0 + 0.25 * track_s))
+	# 무리 사냥꾼 — 적 4마리 이상인 창에서 +50% (v3.2 조건형)
+	if Game.medal_on("pack_hunter") and enemies.size() >= 4:
+		dmg = int(dmg * 1.5)
+	dmg = int(dmg * tactic_out_mult())
 	e["hp"] = maxi(0, e["hp"] - dmg)
 	var dead: bool = e["hp"] == 0
 	if dead:
@@ -206,7 +253,7 @@ func _enemy_act(i: int) -> void:
 	var t := Game.pick_target()
 	if t < 0:
 		return
-	var dmg := int(maxf(1.0, e["atk"] * randf_range(0.8, 1.2)))
+	var dmg := int(maxf(1.0, e["atk"] * randf_range(0.8, 1.2) * tactic_in_mult()))
 	line.emit("%s의 공격!" % display_name(e))
 	Game.damage_member(t, dmg)
 	var fell: bool = Game.members[t]["ghost"]
@@ -225,10 +272,19 @@ func _finish_victory() -> void:
 	for e in enemies:
 		g += int(e["gold"])
 		xp += int(e["exp"])
-	g = int(g * Game.gold_multiplier())
-	# 어부 아우의 그물 — 무리 창(적 3+)의 골드 +30%
-	if enemies.size() >= 3 and Game.passive_on("net"):
-		g = int(g * 1.3)
+	g = int(g * Game.gold_multiplier() * tactic_gold_mult())
+	# 어부 아우의 그물 — 무리 창(적 3+)의 골드 +30% (수중에서 각성, 후미의 긍지 적용)
+	if enemies.size() >= 3:
+		var net_s := Game.passive_scale("net")
+		if net_s > 0.0:
+			g = int(g * (1.0 + 0.3 * net_s))
+		# 어부의 긍지 — 어부 편성 시 무리 창 보상 +50% (v3.2 조건형)
+		if Game.medal_on("fisher_pride") and (Game.has_member("fisher_a") or Game.has_member("fisher_b")):
+			g = int(g * 1.5)
+	# 통계 — 미믹 승수 (도전과제식 훈장의 재료)
+	for e in enemies:
+		if String(e.get("mid", "")) == "mimic":
+			Game.add_stat("mimic_wins")
 	line.emit("몬스터를 물리쳤다!")
 	line.emit("%d G를 손에 넣었다!" % g)
 	# 상인의 잡템 습득 — 전투 후 자잘한 덤
@@ -279,14 +335,15 @@ func combo_frogify() -> void:
 
 # ---------------------------------------------------------------- 황금 슬라임
 
-func spawn_golden(duration: float) -> void:
+func spawn_golden(duration: float, silver: bool = false) -> void:
 	if finished or golden_active:
 		return
 	golden_active = true
+	golden_silver = silver
 	# 황금의 손길 미해금 — 약만 올리고 금방 도망간다 (v3.1 §B-7-3)
 	golden_timer = duration if Game.up["golden_hands"] > 0 else 4.0
 	golden_gauge = 0.0
-	line.emit("황금 슬라임이")
+	line.emit("%s 슬라임이" % ("은빛" if silver else "황금"))
 	line.emit("나타났다!")
 	if Game.up["golden_hands"] == 0:
 		line.emit("…하지만 아직")
@@ -299,7 +356,12 @@ func rub_golden(amount: float) -> void:
 	golden_gauge += amount
 	if golden_gauge >= 1.0:
 		golden_active = false
-		var reward := int(120.0 * Game.gold_scale() * Game.gold_multiplier())
-		line.emit("황금 슬라임을")
+		# 은빛(밤)은 경험치를, 황금(낮)은 골드를 남긴다 (v3.2 §B-5)
+		var reward: int
+		if golden_silver:
+			reward = int(60.0 * Game.tier_exp(Game.progress_tier()))
+		else:
+			reward = int(120.0 * Game.gold_scale() * Game.gold_multiplier())
+		line.emit("%s 슬라임을" % ("은빛" if golden_silver else "황금"))
 		line.emit("붙잡았다!")
 		golden_captured.emit(reward)

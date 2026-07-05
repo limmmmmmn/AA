@@ -62,8 +62,11 @@ func _ready() -> void:
 			_sprite.self_modulate = Color(0.45, 0.4, 0.55)
 		"gate":
 			_make_sprite("gate", Rect2())
-		"exit", "signpost", "warehouse", "fountain", "bank", "frogstatue", "swordrock":
+		"exit", "signpost", "warehouse", "fountain", "bank", "frogstatue", "swordrock", "home", "well", "rotoshield":
 			pass  # _draw로 그린다 (임시 도형)
+		"mom":
+			_make_sprite("chief", Rect2())
+			_sprite.self_modulate = Color(1.05, 0.8, 0.85)  # 임시 — 엄마는 분홍 톤
 		"redchest":
 			_make_sprite("chest", Rect2(0, 0, 16, 18))
 			_sprite.self_modulate = Color(1.0, 0.45, 0.45)  # 붉은 상자 — 마법의 열쇠로만
@@ -106,7 +109,7 @@ func _process(delta: float) -> void:
 		_cd -= delta
 		if _cd <= 0.0:
 			_set_ready(true)
-	if kind in ["sparkle", "board", "casino", "bard", "smith", "exit", "gate", "chief", "signpost", "warehouse", "redchest", "fountain", "medalking", "bank", "frogstatue", "swordrock"]:
+	if kind in ["sparkle", "board", "casino", "bard", "smith", "exit", "gate", "chief", "signpost", "warehouse", "redchest", "fountain", "medalking", "bank", "frogstatue", "swordrock", "home", "well", "rotoshield"]:
 		queue_redraw()
 	if kind == "recruit":
 		_sprite.position.y = -absf(sin(_t * 3.0)) * 2.0
@@ -237,6 +240,40 @@ func _draw() -> void:
 			draw_rect(Rect2(-2.5, -10.5, 5, 1.5), Color("2a3020"), true)  # 입 (투입구)
 			var fa := 0.5 + 0.5 * sin(_t * 3.0)
 			draw_circle(Vector2(0, -18), 1.2, Color(1.0, 0.83, 0.29, fa))
+		"home":
+			# 용사의 집 (v3.2 §B-6 — 프롤로그의 발원지, 임시 도형)
+			draw_rect(Rect2(-14, -20, 28, 20), Color("c8a878"), true)
+			draw_rect(Rect2(-14, -20, 28, 20), Color("6a5138"), false, 1.5)
+			draw_colored_polygon(PackedVector2Array([Vector2(-17, -20), Vector2(17, -20), Vector2(0, -31)]), Color("a05a3a"))
+			draw_rect(Rect2(-4, -11, 8, 11), Color("5a3f28"), true)
+			draw_rect(Rect2(5, -17, 6, 5), Color(1.0, 0.95, 0.6) if is_ready else Color("3a3448"), true)  # 불 켜진 창
+			if is_ready:
+				# 굴뚝 연기 — 뭔가 준비돼 있다
+				for i in 2:
+					var ph := fmod(_t * 0.8 + i * 0.5, 1.0)
+					draw_circle(Vector2(-9.0 + sin(_t + i) * 2.0, -32.0 - ph * 7.0), 1.6, Color(0.9, 0.9, 0.9, 0.7 - ph * 0.6))
+		"well":
+			# 우물 (v3.2 §B-9 — 쿨타임 오브젝트 4호, 임시 도형)
+			draw_circle(Vector2(0, -4), 8.0, Color("8a8478"))
+			draw_circle(Vector2(0, -4), 5.0, Color("20242e") if is_ready else Color("3a3e48"))
+			draw_rect(Rect2(-9, -18, 2, 12), Color("6a4420"), true)
+			draw_rect(Rect2(7, -18, 2, 12), Color("6a4420"), true)
+			draw_colored_polygon(PackedVector2Array([Vector2(-11, -18), Vector2(11, -18), Vector2(0, -24)]), Color("8a5a30"))
+			if is_ready:
+				var wla := 0.4 + 0.4 * sin(_t * 3.0)
+				draw_circle(Vector2(0, -4), 2.0, Color(0.5, 0.75, 1.0, wla))
+		"rotoshield":
+			# 로토의 방패 (v3.2 §B-7 — 동굴 지배자가 지키던 것, 임시 도형)
+			var sha := 0.75 + 0.25 * sin(_t * 2.0)
+			draw_colored_polygon(PackedVector2Array([
+				Vector2(-7, -18), Vector2(7, -18), Vector2(7, -8), Vector2(0, -2), Vector2(-7, -8)]),
+				Color(0.35, 0.5, 0.9, sha))
+			draw_colored_polygon(PackedVector2Array([
+				Vector2(-5, -16), Vector2(5, -16), Vector2(5, -9), Vector2(0, -4.5), Vector2(-5, -9)]),
+				Color(0.75, 0.8, 1.0, sha))
+			for i in 2:
+				var ph := fmod(_t * 1.2 + i * 0.5, 1.0)
+				draw_circle(Vector2(sin(_t * 1.5 + i * 3.0) * 6.0, -16.0 - ph * 7.0), 1.0, Color(0.8, 0.9, 1.0, 1.0 - ph))
 		"swordrock":
 			# 검이 꽂힌 바위 (서사시 제 2절 — 임시 도형)
 			draw_circle(Vector2(0, -4), 9.0, Color("7a7468"))
@@ -315,6 +352,10 @@ func hover_name() -> String:
 		"bank": return "은행"
 		"frogstatue": return "개구리 석상"
 		"swordrock": return "검이 꽂힌 바위"
+		"home": return "용사의 집"
+		"mom": return "엄마"
+		"well": return "우물"
+		"rotoshield": return "로토의 방패"
 		"recruit": return Game.CLASS_DEFS[recruit_cls]["name"]
 	return kind
 
@@ -349,6 +390,8 @@ func flavor() -> String:
 		"castle":
 			return "마왕성. 저곳의 문은 아직 굳게 닫혀 있다."
 		"sparkle":
+			if Game.current_field == 3:
+				return "진주조개다! 입을 꾹 다물고 있다." if Game.up["shovel"] > 0 else "진주조개다. …열 도구가 없다."
 			return "뭔가 묻혀 있는 것 같다…" if Game.up["shovel"] == 0 else "뭔가 묻혀 있다! 파 보자."
 		"signpost":
 			return "행선지 이정표. 필드를 갈아끼울 수 있다. (Space)"
@@ -372,6 +415,14 @@ func flavor() -> String:
 			return "은행이다. 예금은 전멸해도 안전하다. (Space)"
 		"frogstatue":
 			return "개구리 석상. 잔돈을 넣어 달라는 표정이다. (Space)"
+		"home":
+			return "…엄마 생각이 난다. (Space)"
+		"mom":
+			return "엄마다. 아침마다 용사를 깨워 준 사람."
+		"well":
+			return "우물이다. 들여다보고 싶다. (Space)" if is_ready else "우물. 방금 들여다봤다."
+		"rotoshield":
+			return "전설의 방패가 빛나고 있다…! (Space)"
 		"swordrock":
 			if Game.sword_rock >= 2:
 				return "검이 뽑힌 바위. 이야기는 이루어졌다."
@@ -406,4 +457,8 @@ func pick_radius() -> float:
 		"bank": return 22.0
 		"frogstatue": return 12.0
 		"swordrock": return 16.0
+		"home": return 20.0
+		"mom": return 16.0
+		"well": return 14.0
+		"rotoshield": return 16.0
 	return 16.0

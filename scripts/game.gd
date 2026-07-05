@@ -81,8 +81,84 @@ var combo_hint_known := false        # 서사시로 힌트 해금
 var charmed: Array = []              # 매혹된 몬스터 defs (다음 전투 1회 참전, 최대 2)
 var thief_away := false              # 도적 배신 드라마 (서사시)
 var thief_return_at := 0.0
-var sword_rock := 0                  # 검이 꽂힌 바위: 0 미스폰 / 1 스폰됨 / 2 뽑음
+var sword_rock := 0                  # 검이 꽂힌 바위: 0 미스폰 / 1 스폰됨 / 2 뽑음 (=로토의 검)
 var playtime := 0.0
+
+# ---------------------------------------------------------------- v3.2
+var hero_name := ""                  # 이름 입력 (§B-4) — ""이면 새 게임에서 문자판이 뜬다
+var current_field := 0               # main이 갱신 — interactable 검시가 참조 (진주조개 등)
+var tactic := ""                     # 작전 명령 (§B-3): "" / attack / life / gold
+var tactic_known := false            # 2장 여관에서 해금
+var roto_shield := false             # 로토 3점 세트 (§B-7): 검=sword_rock, +방패/투구
+var roto_helm := false
+var lunch_until := 0.0               # 엄마의 도시락 버프 (playtime 기준, §B-6)
+var silver_seen := false             # 은빛 슬라임 첫 조우 (밤 예고용)
+var titles: Array = []               # 획득한 칭호 id 순서 (§B-8)
+var casino_up := {"jackpot": 0, "consol": 0, "hold": 0}  # 카지노 운 트리 (§B-10 — 코인 결제)
+# 통계 카운터 — 칭호·도전과제식 훈장·(장래) 스팀 업적이 공유 (§E)
+var stats := {
+	"pots": 0, "digs": 0, "wells": 0, "flees": 0, "inn_rests": 0, "forges": 0,
+	"golden_caught": 0, "silver_caught": 0, "golden_missed": 0,
+	"mimic_wins": 0, "combos": 0, "revives": 0, "requiems": 0, "wipes": 0,
+}
+
+func hn() -> String:
+	return hero_name if hero_name != "" else "용사"
+
+func add_stat(key: String, v: int = 1) -> void:
+	stats[key] = int(stats.get(key, 0)) + v
+
+# 밤낮 (§B-5) — 숲 개방 후 시작. 낮 150초 + 밤 70초 순환
+const DAY_LEN := 150.0
+const NIGHT_LEN := 70.0
+
+func clock_on() -> bool:
+	return fields_unlocked[1]
+
+func is_night() -> bool:
+	if not clock_on():
+		return false
+	return fmod(playtime, DAY_LEN + NIGHT_LEN) >= DAY_LEN
+
+func night_frac() -> float:
+	# 0=완전 낮, 1=완전 밤 (경계 6초 부드럽게)
+	if not clock_on():
+		return 0.0
+	var t := fmod(playtime, DAY_LEN + NIGHT_LEN)
+	if t < DAY_LEN:
+		return clampf(1.0 - (DAY_LEN - t) / 6.0, 0.0, 1.0) if t > DAY_LEN - 6.0 else 0.0
+	var left := (DAY_LEN + NIGHT_LEN) - t
+	return clampf(left / 6.0, 0.0, 1.0) if left < 6.0 else 1.0
+
+func roto_count() -> int:
+	return int(sword_rock >= 2) + int(roto_shield) + int(roto_helm)
+
+func roto_complete() -> bool:
+	return roto_count() >= 3
+
+func lunch_on() -> bool:
+	return playtime < lunch_until
+
+# 작전 (§B-3) — 창별 유효 작전은 battle_sim이 roll_tactic()으로 뽑는다
+const TACTIC_NAMES := {"attack": "가차없이 공격", "life": "목숨을 소중히", "gold": "골드를 노려라"}
+
+func tactic_power() -> float:
+	# 명령 불복종 = 효과 2배, 임기응변 = +50%
+	if medal_on("disobedience"):
+		return 2.0
+	if medal_on("improvise"):
+		return 1.5
+	return 1.0
+
+func roll_tactic() -> String:
+	# 창이 열릴 때 한 번 — 임기응변은 매창 랜덤, 불복종은 가끔 제멋대로
+	var t := tactic
+	var keys: Array = TACTIC_NAMES.keys()
+	if medal_on("improvise"):
+		t = keys[randi() % keys.size()]
+	elif medal_on("disobedience") and t != "" and randf() < 0.15:
+		t = keys[randi() % keys.size()]
+	return t
 
 # ---------------------------------------------------------------- 재화/성장
 
@@ -157,22 +233,46 @@ var medals_equipped: Array = []      # 장착 중 (슬롯 제한)
 
 # ---------------------------------------------------------------- 훈장 (규칙을 바꾸는 훈장만)
 
+## 훈장 3계층 (v3.2 §C — 순수형 7 / 양날형 9 / 조건형 9 / 유령 계열 5)
 const MEDAL_DEFS := {
-	"coward_flag":   {"name": "겁쟁이의 깃발",       "desc": "창 상한 -1, 남은 창 전투 속도 2배",       "hint": "초원의 지배자가 지니고 있다"},
-	"aqua_regia":    {"name": "왕수의 성수",         "desc": "받는 데미지 2배, 골드 2배",               "hint": "숲의 지배자가 지니고 있다"},
-	"ghost_warcry":  {"name": "원혼의 함성",         "desc": "유령 1명당 파티 공격력 +15%",             "hint": "동굴의 지배자가 지니고 있다"},
-	"spirit_party":  {"name": "심령 파티",           "desc": "유령도 모든 창에서 절반 위력으로 싸운다", "hint": "설원의 지배자가 지니고 있다"},
-	"sticky_gloves": {"name": "끈끈이 장갑",         "desc": "황금 슬라임 도주까지 +2초",               "hint": "붉은 상자 안에 있는 것 같다"},
-	"cracked_pot":   {"name": "금 간 항아리",        "desc": "항아리 쿨타임 절반, 보상 절반",           "hint": "메달왕이 교환해 준다"},
-	"mimic_teeth":   {"name": "미믹의 이빨",         "desc": "모든 상자가 미믹, 보상 3배",              "hint": "카지노 교환소 한정"},
-	"metal_crown":   {"name": "메탈 슬라임의 왕관",  "desc": "황금 슬라임이 자주 오지만 빨리 도망간다", "hint": "메달왕이 교환해 준다"},
-	"slime_incense": {"name": "슬라임 유인향",       "desc": "황금 슬라임이 주시 중인 창에만 나타난다", "hint": "카지노 교환소 한정"},
-	"anvil_bless":   {"name": "모루의 축복",         "desc": "대장간 실패 없음, 대신 +3도 없음",        "hint": "회심의 필살작을 3번 쳐내면…"},
-	"loyal_heart":   {"name": "의리의 심장",         "desc": "도적의 훔치기 확률 2배",                  "hint": "돌아온 자만이 줄 수 있다"},
+	# --- 순수형 (무조건 이득 — 비용은 슬롯 희소성) ---
+	"sturdy_charm":  {"tier": "순수", "name": "튼튼한 부적",        "desc": "최대 HP +20%",                             "hint": "메달왕이 교환해 준다"},
+	"sharp_crest":   {"tier": "순수", "name": "날카로운 문장",      "desc": "파티 공격력 +15%",                         "hint": "메달왕이 교환해 준다"},
+	"wind_sign":     {"tier": "순수", "name": "바람의 징표",        "desc": "이동속도 +15%",                            "hint": "초원의 지배자가 지니고 있다"},
+	"rich_seal":     {"tier": "순수", "name": "부자의 인장",        "desc": "골드 획득 +10%",                           "hint": "카지노 교환소 한정"},
+	"holy_pendant":  {"tier": "순수", "name": "성수병 목걸이",      "desc": "성수 재생 +30%",                           "hint": "신부의 눈길이 벼려지면…"},
+	"watch_eye":     {"tier": "순수", "name": "파수꾼의 눈",        "desc": "전투창 상한 +1",                           "hint": "카지노 교환소 한정"},
+	"attendance":    {"tier": "순수", "name": "개근상",             "desc": "경험치 획득 +10%",                         "hint": "칭호를 3개 모으면…"},
+	# --- 양날형 (이득 + 대가) ---
+	"mimic_teeth":   {"tier": "양날", "name": "미믹의 이빨",        "desc": "모든 상자가 미믹, 보상 3배",               "hint": "미믹을 10번 이기면…"},
+	"cracked_pot":   {"tier": "양날", "name": "금 간 항아리",       "desc": "항아리 쿨타임 절반, 보상 절반",            "hint": "항아리를 1000개 깨뜨리면…"},
+	"coward_flag":   {"tier": "양날", "name": "겁쟁이의 깃발",      "desc": "창 상한 -1, 남은 창 전투 속도 2배",        "hint": "10번 도망치면…"},
+	"aqua_regia":    {"tier": "양날", "name": "왕수의 성수",        "desc": "받는 데미지 2배, 골드 2배",                "hint": "메달왕이 교환해 준다"},
+	"duel_manner":   {"tier": "양날", "name": "일기토의 예법",      "desc": "모든 조우가 정예 1마리, 보상 집중",        "hint": "동굴의 지배자가 지니고 있다"},
+	"late_sleep":    {"tier": "양날", "name": "늦잠",               "desc": "여관에서 유령까지 깨어나지만, 늦잠을 잔다","hint": "여관을 사랑하면…"},
+	"anvil_bless":   {"tier": "양날", "name": "모루의 축복",        "desc": "대장간 실패 없음, 대신 +3도 없음",         "hint": "회심의 필살작을 3번 쳐내면…"},
+	"metal_crown":   {"tier": "양날", "name": "메탈 슬라임의 왕관", "desc": "황금 슬라임이 자주 오지만 빨리 도망간다",  "hint": "황금 슬라임을 10번 붙잡으면…"},
+	"disobedience":  {"tier": "양날", "name": "명령 불복종",        "desc": "작전 효과 2배, 가끔 파티가 제멋대로 군다", "hint": "숲의 지배자가 지니고 있다"},
+	# --- 조건형 (상황·편성·환경 발동 — 조합은 발견하는 것) ---
+	"rear_pride":    {"tier": "조건", "name": "후미의 긍지",        "desc": "대열 맨 뒤 동료의 패시브 2배",             "hint": "붉은 상자 안에 있는 것 같다"},
+	"moonlight":     {"tier": "조건", "name": "달빛 훈장",          "desc": "밤 동안 골드 2배",                         "hint": "은빛으로 반짝이는 것을 붙잡으면…"},
+	"fisher_pride":  {"tier": "조건", "name": "어부의 긍지",        "desc": "어부 편성 시 무리 창 보상 +50%",           "hint": "형제가 모이면…"},
+	"pack_hunter":   {"tier": "조건", "name": "무리 사냥꾼",        "desc": "창 안 적 4마리 이상이면 데미지 +50%",      "hint": "동굴의 지배자가 지니고 있다"},
+	"improvise":     {"tier": "조건", "name": "임기응변",           "desc": "창마다 작전이 랜덤, 전 작전 효과 +50%",    "hint": "카지노 교환소 한정"},
+	"vip_card":      {"tier": "조건", "name": "카지노 VIP 카드",    "desc": "슬롯에 몬스터가 뜨면 필드에 진짜 나타난다","hint": "카지노 교환소 한정"},
+	"slime_incense": {"tier": "조건", "name": "슬라임 유인향",      "desc": "황금 슬라임이 주시 중인 창에만 나타난다",  "hint": "메달왕이 교환해 준다"},
+	"sticky_gloves": {"tier": "조건", "name": "끈끈이 장갑",        "desc": "황금 슬라임 도주까지 +2초",                "hint": "놓쳐 본 자에게 주어진다"},
+	"clairvoyance":  {"tier": "조건", "name": "천리안",             "desc": "주시 효과가 옆 창에도 절반 걸린다",        "hint": "수중의 지배자가 지니고 있다"},
+	# --- 유령 계열 (조건형 하위군 — 유령 빌드) ---
+	"poltergeist":   {"tier": "유령", "name": "폴터가이스트",       "desc": "유령이 지나가는 항아리를 깨뜨린다",        "hint": "스님의 독경이 통하면…"},
+	"ghost_warcry":  {"tier": "유령", "name": "원혼의 함성",        "desc": "유령 1명당 파티 공격력 +15%",              "hint": "쓰러져 본 자에게 주어진다"},
+	"spirit_party":  {"tier": "유령", "name": "심령 파티",          "desc": "유령도 모든 창에서 절반 위력으로 싸운다",  "hint": "메달왕이 교환해 준다 (고가)"},
+	"martyr":        {"tier": "유령", "name": "순교자의 성표",      "desc": "동료가 쓰러지는 순간 전 창에 폭발",        "hint": "빛으로 다섯 번 되살리면…"},
+	"loyal_heart":   {"tier": "유령", "name": "돌아온 자의 맹세",   "desc": "도적 편성 시 훔치기 2배",                  "hint": "돌아온 자만이 줄 수 있다"},
 }
 
 func medal_slots() -> int:
-	return mini(3 + (run_count - 1), 5)
+	return mini(3 + (run_count - 1), 6)  # v3.2: 상한 3→6
 
 func medal_on(id: String) -> bool:
 	return medals_equipped.has(id)
@@ -226,16 +326,16 @@ const MONSTER_DEFS := [
 	{"id": "angry",  "name": "성난 슬라임", "hp": 26, "atk": 7,  "gold": 22, "exp": 11, "tex": "res://assets/enemies/slime_chaser.png", "scale": 1.0},
 	{"id": "cyclops","name": "외눈 괴수",   "hp": 44, "atk": 11, "gold": 45, "exp": 22, "tex": "res://assets/enemies/slime_fly.png",    "scale": 1.0},
 ]
-const FIELD_NAMES := ["초원", "숲", "동굴", "설원", "마왕성"]
-const BOSS_NAMES := ["초원의 지배자", "숲의 지배자", "동굴의 지배자", "설원의 지배자", "마왕"]
+const FIELD_NAMES := ["초원", "숲", "동굴", "수중", "마왕성"]  # v3.2: 설원→수중 (설원은 회차 후보 폴더로)
+const BOSS_NAMES := ["초원의 지배자", "숲의 지배자", "동굴의 지배자", "수중의 지배자", "마왕"]
 const FIELD_TINTS := [
 	Color(1, 1, 1),                # 초원
 	Color(0.8, 1.05, 0.75),       # 숲
 	Color(0.85, 0.75, 1.0),       # 동굴
-	Color(0.78, 0.9, 1.15),       # 설원
+	Color(0.55, 0.8, 1.25),       # 수중 — 물빛
 	Color(0.72, 0.5, 0.85),       # 마왕성
 ]
-const FIELD_PREFIX := ["", "숲 ", "동굴 ", "얼음 ", "마 "]
+const FIELD_PREFIX := ["", "숲 ", "동굴 ", "물 ", "마 "]
 
 # 필드 티어(1~5) 기반 스케일
 func tier_stat(t: int) -> float:  return pow(2.6, t - 1)
@@ -321,6 +421,22 @@ func passive_on(pid: String) -> bool:
 			return true
 	return false
 
+func passive_scale(pid: String) -> float:
+	# 패시브 보너스 배율: 0=꺼짐 / 1=기본 / 2=후미의 긍지 (대열 맨 뒤, v3.2)
+	# 어부 계열은 수중에서 각성 ×2 (v3.2 §B-1)
+	if not passive_on(pid):
+		return 0.0
+	var s := 1.0
+	if medal_on("rear_pride"):
+		for i in range(members.size() - 1, -1, -1):
+			if not members[i]["ghost"]:
+				if COMPANIONS[members[i]["cls"]]["passive"] == pid:
+					s *= 2.0
+				break
+	if (pid == "fish" or pid == "net") and current_field == 3:
+		s *= 2.0
+	return s
+
 func companion_count() -> int:
 	var n := 0
 	for k in companions_owned.keys():
@@ -336,19 +452,25 @@ func member_atk(idx: int) -> int:
 	var atk := float(base + m["weapon_lv"] * 2 + int(level / 2.0))
 	if medal_on("ghost_warcry"):
 		atk *= 1.0 + 0.15 * ghost_count()
+	if medal_on("sharp_crest"):
+		atk *= 1.15
+	if lunch_on():
+		atk *= 1.1  # 엄마의 도시락
 	return int(atk)
 
 func member_crit(idx: int) -> float:
 	var c: float = COMPANIONS[members[idx]["cls"]]["crit"]
-	if passive_on("crit"):
-		c += 0.10  # 무도가의 회심 — 파티 전체
+	c += 0.10 * passive_scale("crit")  # 무도가의 회심 — 파티 전체
 	return c
 
 func member_max_hp(idx: int) -> int:
 	var m: Dictionary = members[idx]
 	var base: int = COMPANIONS[m["cls"]]["hp"]
 	# 침구 개선 = %화 (v3.1 §B-6 — 덧셈 방어는 곱셈 공격을 못 따라간다)
-	return int((base + (level - 1) * 3) * (1.0 + 0.08 * up["max_hp"]))
+	var mx: float = (base + (level - 1) * 3) * (1.0 + 0.08 * up["max_hp"])
+	if medal_on("sturdy_charm"):
+		mx *= 1.2
+	return int(mx)
 
 func refresh_max_hp() -> void:
 	for i in members.size():
@@ -370,8 +492,9 @@ func holy_max() -> float:
 
 func holy_regen_rate() -> float:
 	var r: float = 1.0 * (1.0 + 0.35 * up["holy_regen"])  # 샘의 축복
-	if passive_on("meal"):
-		r *= 1.5  # 요리사의 한 끼
+	r *= 1.0 + 0.5 * passive_scale("meal")  # 요리사의 한 끼
+	if medal_on("holy_pendant"):
+		r *= 1.3
 	return r
 
 func holy_heal_pct() -> float:
@@ -425,6 +548,8 @@ func add_combo_gauge() -> void:
 
 func max_windows() -> int:
 	var n: int = 1 + up["win_cap"] + (run_count - 1) + casino_wincap
+	if medal_on("watch_eye"):
+		n += 1
 	if medal_on("coward_flag"):
 		n -= 1
 	return clampi(n, 1, MAX_WINDOWS_HARD)
@@ -432,25 +557,37 @@ func max_windows() -> int:
 func max_enemies_per_window() -> int:
 	return mini(1 + up["density"] + int(progress_tier() / 2.0), 5)
 
+func mounted() -> bool:
+	# 탈것 (v3.2 §B-2) — 이속 트리의 끝은 수치가 아니라 존재
+	return up["speed"] >= 9
+
 func move_speed() -> float:
-	return 65.0 * pow(1.08, up["speed"])
+	var v := 65.0 * pow(1.08, up["speed"])
+	if mounted():
+		v *= 1.25  # 탈것 보너스
+	if medal_on("wind_sign"):
+		v *= 1.15
+	return v
 
 func turn_interval() -> float:
 	var t := 1.1 * pow(0.93, up["battle_speed"])
 	if medal_on("coward_flag"):
 		t *= 0.5
-	if passive_on("dance"):
-		t *= 0.93  # 무희의 춤
+	t *= pow(0.93, passive_scale("dance"))  # 무희의 춤
 	return t
 
 func gold_multiplier() -> float:
 	var g := pow(1.15, up["gold_mult"]) * (1.0 + 0.2 * (run_count - 1))
 	if medal_on("aqua_regia"):
 		g *= 2.0
-	if passive_on("steal"):
-		g *= 1.3 if medal_on("loyal_heart") else 1.15  # 도적의 훔치기
-	if passive_on("interest"):
-		g *= 1.10  # 은행원의 이자 감각
+	var steal_s := passive_scale("steal")
+	if steal_s > 0.0:
+		g *= 1.0 + (0.3 if medal_on("loyal_heart") else 0.15) * steal_s  # 도적의 훔치기
+	g *= 1.0 + 0.10 * passive_scale("interest")  # 은행원의 이자 감각
+	if medal_on("rich_seal"):
+		g *= 1.1
+	if medal_on("moonlight") and is_night():
+		g *= 2.0  # 달빛 훈장 — 밤을 기다릴 이유
 	return g
 
 func price(c: int) -> int:
@@ -478,6 +615,8 @@ func exp_to_next() -> int:
 	return 18 * level * level
 
 func add_exp(v: int) -> bool:
+	if medal_on("attendance"):
+		v = int(v * 1.1)  # 개근상
 	exp += v
 	var leveled := false
 	while exp >= exp_to_next():
@@ -594,13 +733,30 @@ func set_weapon_lv(cls: String, lv: int) -> void:
 			m["weapon_lv"] = lv
 	party_changed.emit()
 
+# 무기 명명 (v3.2 §B-11 — 환상수호전 오마주. 진화 마디 +5/+10마다 새 이름, 골드 전용)
+const WEAPON_NAMES := {
+	"knight": ["물려받은 대검", "성채의 벽", "불락의 맹세"],
+	"warrior": ["이 빠진 도끼", "산울림", "일격필살"],
+	"priest": ["참나무 지팡이", "기도하는 손", "새벽의 축도"],
+	"mage": ["낡은 마도서", "별부스러기", "소용돌이치는 밤"],
+	"thief": ["녹슨 단검", "달그림자", "밤을 가르는 자"],
+	"monkf": ["맨주먹", "감아쥔 붕대", "회심의 주먹"],
+}
+
 func weapon_name(idx: int) -> String:
 	var m: Dictionary = members[idx]
 	var lv: int = m["weapon_lv"]
 	if m["cls"] == "hero":
-		# 전설의 검 — 돈이 아니라 이야기(서사시)와 바위가 벼린다
-		var stages := ["녹슨 검", "낡은 검", "기억의 검", "새벽의 검", "여명의 검", "전설의 검", "전설의 검 (진)"]
-		return stages[clampi(lv, 0, stages.size() - 1)]
+		# 용사의 검 = 로토 3점 세트 연동 (v3.2 §B-7) — 돈으로 벼릴 수 없다
+		if sword_rock < 2:
+			return "아빠의 목검"
+		if roto_complete() and epic_complete():
+			return "전설의 검·진"
+		return "전설의 검"
+	if WEAPON_NAMES.has(m["cls"]):
+		var stages: Array = WEAPON_NAMES[m["cls"]]
+		var base2: String = stages[2 if lv >= 10 else (1 if lv >= 5 else 0)]
+		return base2 + (" +%d" % lv if lv > 0 else "")
 	var d: Dictionary = COMPANIONS[m["cls"]]
 	var base: String = d.get("weapon", "여행자의 지팡이")  # 객원은 공용 무기
 	if lv >= 10:
@@ -608,6 +764,37 @@ func weapon_name(idx: int) -> String:
 	elif lv >= 5:
 		base = "강철 " + base
 	return base + (" +%d" % lv if lv > 0 else "")
+
+# ---------------------------------------------------------------- 칭호 (v3.2 §B-8 — 플레이 습관의 거울)
+
+const TITLE_DEFS := [
+	{"id": "pot_king",     "name": "항아리 파괴왕",     "stat": "pots",          "n": 100},
+	{"id": "late_riser",   "name": "또 늦잠 잔 자",     "stat": "inn_rests",     "n": 10},
+	{"id": "tuna_witness", "name": "참치를 목격한 자",  "stat": "combos",        "n": 1},
+	{"id": "runaway",      "name": "삼십육계의 달인",   "stat": "flees",         "n": 10},
+	{"id": "gold_hand",    "name": "황금손",            "stat": "golden_caught", "n": 5},
+	{"id": "mole",         "name": "두더지",            "stat": "digs",          "n": 50},
+	{"id": "night_walker", "name": "밤을 걷는 자",      "stat": "silver_caught", "n": 1},
+	{"id": "well_gazer",   "name": "우물 들여다보는 자","stat": "wells",         "n": 30},
+]
+
+func current_title() -> String:
+	if titles.is_empty():
+		return ""
+	for t in TITLE_DEFS:
+		if t["id"] == titles[titles.size() - 1]:
+			return t["name"]
+	return ""
+
+func check_titles() -> Dictionary:
+	# 새로 달성한 칭호 하나를 반환 (한 번에 하나 — 의식은 겹치지 않는다)
+	for t in TITLE_DEFS:
+		if titles.has(t["id"]):
+			continue
+		if int(stats.get(t["stat"], 0)) >= int(t["n"]):
+			titles.append(t["id"])
+			return t
+	return {}
 
 # ---------------------------------------------------------------- 필드/회차
 
@@ -651,7 +838,14 @@ func do_prestige() -> void:
 	sword_rock = 0
 	holy = holy_max()
 	deposit = 0
-	# 영구 유지: 훈장 도감/장착, 서사시 이력, 도감(discovered), 필살작 기록, 카지노 상한, book_seen, combo_hint_known
+	# v3.2 리셋 — 로토/작전/카지노 운. 이름·칭호·통계는 영구 (도전과제식)
+	roto_shield = false
+	roto_helm = false
+	tactic = ""
+	lunch_until = 0.0
+	silver_seen = false
+	casino_up = {"jackpot": 0, "consol": 0, "hold": 0}
+	# 영구 유지: 훈장 도감/장착, 서사시 이력, 도감(discovered), 필살작 기록, 카지노 상한, book_seen, combo_hint_known, hero_name, titles, stats, tactic_known
 	_reset_party()
 	save_game()
 	gold_changed.emit(gold)
@@ -666,7 +860,7 @@ func save_game() -> void:
 	for m in members:
 		mem_save.append({"cls": m["cls"], "weapon_lv": m["weapon_lv"], "hp": m["hp"], "ghost": m["ghost"]})
 	var data := {
-		"version": 5,
+		"version": 6,
 		"gold": gold, "total_earned": total_earned,
 		"level": level, "exp": exp, "run_count": run_count, "kills": kills,
 		"up": up,
@@ -689,6 +883,10 @@ func save_game() -> void:
 		"combo_gauge": combo_gauge, "combo_hint_known": combo_hint_known,
 		"thief_away": thief_away, "thief_return_at": thief_return_at,
 		"sword_rock": sword_rock, "playtime": playtime, "deposit": deposit,
+		# v3.2
+		"hero_name": hero_name, "tactic": tactic, "tactic_known": tactic_known,
+		"roto_shield": roto_shield, "roto_helm": roto_helm, "silver_seen": silver_seen,
+		"titles": titles, "casino_up": casino_up, "stats": stats,
 	}
 	var f := FileAccess.open(save_path, FileAccess.WRITE)
 	if f:
@@ -790,6 +988,20 @@ func load_game() -> void:
 	playtime = float(d.get("playtime", 0.0))
 	deposit = int(d.get("deposit", 0))
 	holy = holy_max()
+	# v3.2 (v5 이하 세이브는 기본값 + 이름은 기본명으로 — 이미 논 유저에겐 안 묻는다)
+	hero_name = String(d.get("hero_name", "늦잠꾸러기" if int(d.get("version", 1)) < 6 else ""))
+	tactic = String(d.get("tactic", ""))
+	tactic_known = bool(d.get("tactic_known", false))
+	roto_shield = bool(d.get("roto_shield", false))
+	roto_helm = bool(d.get("roto_helm", false))
+	silver_seen = bool(d.get("silver_seen", false))
+	titles = d.get("titles", [])
+	var cu: Dictionary = d.get("casino_up", {})
+	for k in casino_up.keys():
+		casino_up[k] = int(cu.get(k, 0))
+	var st: Dictionary = d.get("stats", {})
+	for k in stats.keys():
+		stats[k] = int(st.get(k, 0))
 	# 편성 재구성 후 저장된 HP/유령 상태 복원
 	rebuild_party()
 	for ms in mem:

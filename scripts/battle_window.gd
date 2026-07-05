@@ -372,12 +372,13 @@ func _on_frogified() -> void:
 # ---------------------------------------------------------------- 황금 슬라임
 
 func _on_golden_spawned() -> void:
-	Sfx.play("golden")
+	Sfx.play("golden", 0.8 if sim.golden_silver else 1.0)
 	_golden = TextureRect.new()
 	_golden.texture = load("res://assets/enemies/slime.png")
 	_golden.stretch_mode = TextureRect.STRETCH_SCALE
 	_golden.size = Vector2(15, 17)
-	_golden.modulate = Color(3.4, 2.3, 0.3)  # 파란 슬라임을 빛나는 금색으로
+	# 낮=금빛, 밤=은빛 (v3.2 §B-5)
+	_golden.modulate = Color(2.2, 2.4, 2.8) if sim.golden_silver else Color(3.4, 2.3, 0.3)
 	_golden.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_golden.pivot_offset = _golden.size / 2.0
 	_golden.position = Vector2(randf_range(16, size.x - 34), randf_range(12, size.y - (UILib.FS * 3.0 + 36.0)))
