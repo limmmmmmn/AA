@@ -93,6 +93,10 @@ var _night_shade: ColorRect = null   # 필드 밤 장막
 var _was_night := false              # 밤낮 경계 알림
 var _fish_voice_done := false        # 수중 진입 연출 (세션당 1회)
 var _polter_timer := 0.0             # 폴터가이스트 틱
+# v3.3
+var _title_mode := false             # 타이틀 = 별도 씬이 아니라 메인 씬의 상태 ("게임이 곧 메뉴")
+var _title_layer: CanvasLayer = null
+var _ending_playing := false         # 엔딩 시퀀스 중 (입력·스폰 잠금)
 
 # ================================================================ setup
 
@@ -130,7 +134,14 @@ func _ready() -> void:
 	_golden_timer = 90.0 if not Game.golden_first_done else randf_range(150.0, 300.0)
 	UILib.set_cursor("point")
 	hud._update_top()
-	_prologue()
+
+	# v3.3 §B: 부팅 → 타이틀 상태 (스모크/씬 리로드 후엔 바로 게임)
+	if OS.get_environment("AAA_SMOKE") == "1" or Game.skip_title:
+		Game.skip_title = false
+		Game.need_intro = false
+		_prologue()
+	else:
+		_enter_title()
 
 	if OS.get_environment("AAA_SMOKE") == "1":
 		var smoke: Node = load("res://scripts/dev_smoke.gd").new()
@@ -156,13 +167,94 @@ func _prologue() -> void:
 		_prologue_lines()
 
 func _prologue_lines() -> void:
-	party.teleport(Vector2(96, 100))  # 용사의 집 앞에서 시작 (프롤로그의 발원지)
-	hud.toast("『일어나렴, %s.』" % Game.hn(), 3.0)
-	get_tree().create_timer(3.4).timeout.connect(func():
+	# v3.3 §E 확정 인트로: 검은 화면 엄마 → 페이드 인 집 앞 → "너무 늦었다" → 조작. 20초 이내
+	hud.fade_black("엄마: 「일어나렴, %s.」" % Game.hn(), 1.8, func():
+		party.teleport(Vector2(96, 100)))  # 용사의 집 앞 (프롤로그의 발원지)
+	get_tree().create_timer(3.6).timeout.connect(func():
 		hud.toast("%s은(는) 일어났다. 그러나, 너무 늦었다." % Game.hn(), 3.6))
 	get_tree().create_timer(7.6).timeout.connect(func():
 		if not Game.ui_unlocked["desc"]:
 			hud.toast("WASD — 촌장에게 가 보자. (Space)", 4.0))
+
+# ================================================================ 타이틀 (v3.3 §B — "게임이 곧 메뉴다")
+
+func _enter_title() -> void:
+	_title_mode = true
+	party.frozen = true
+	hud.title_hide(true)
+	# 2회차 이후의 타이틀 배경 = 내 마을. 파티는 여관에서 잔다 (늦잠 개그 겸)
+	if Game.buildings.get("inn", false):
+		party.teleport(BUILD_POS["inn"] + Vector2(10, 26))
+	else:
+		party.teleport(Vector2(96, 100))
+	_title_layer = CanvasLayer.new()
+	_title_layer.layer = 20
+	add_child(_title_layer)
+	# 새벽빛 — 마을 위에 얇게 깔린다
+	var dawn := ColorRect.new()
+	dawn.color = Color(0.45, 0.4, 0.65, 0.28)
+	dawn.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dawn.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_title_layer.add_child(dawn)
+	var glow := ColorRect.new()
+	glow.color = Color(1.0, 0.75, 0.5, 0.10)
+	glow.position = Vector2(0, 0)
+	glow.size = Vector2(640, 120)
+	glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_title_layer.add_child(glow)
+	# 로고 — 드퀘 폰트 그대로
+	var logo := UILib.make_label("Appears! Appears! Appears!", 22, UILib.COL_GOLD)
+	logo.add_theme_color_override("font_outline_color", Color(0, 0, 0))
+	logo.add_theme_constant_override("outline_size", 4)
+	logo.position = Vector2(140, 96)
+	_title_layer.add_child(logo)
+	var sub := UILib.make_label("— A AAA Incremental JRPG —", UILib.FS, UILib.COL_WHITE)
+	sub.add_theme_color_override("font_outline_color", Color(0, 0, 0))
+	sub.add_theme_constant_override("outline_size", 3)
+	sub.position = Vector2(248, 128)
+	_title_layer.add_child(sub)
+	var press := UILib.make_label("PRESS  SPACE", UILib.FS, UILib.COL_WHITE)
+	press.add_theme_color_override("font_outline_color", Color(0, 0, 0))
+	press.add_theme_constant_override("outline_size", 3)
+	press.position = Vector2(284, 252)
+	press.name = "press"
+	_title_layer.add_child(press)
+	var tw := create_tween().set_loops()
+	tw.tween_property(press, "modulate:a", 0.15, 0.7)
+	tw.tween_property(press, "modulate:a", 1.0, 0.7)
+	Sfx.title_bgm(true)
+	if OS.get_environment("AAA_TITLE_SHOT") == "1":  # DEV: 타이틀 스크린샷 후 종료
+		get_tree().create_timer(1.6).timeout.connect(func():
+			await RenderingServer.frame_post_draw
+			get_viewport().get_texture().get_image().save_png("user://shot_title.png")
+			print("[SHOT] shot_title.png")
+			get_tree().quit())
+
+func _title_space() -> void:
+	if hud.is_menu_open():
+		return
+	Sfx.play("window")
+	hud.title_hide(true)
+	hud.open_title_menu()
+
+func title_continue(slot: int) -> void:
+	Sfx.title_bgm(false)
+	Sfx.play("fanfare")
+	Game.continue_game(slot)
+	Game.skip_title = true
+	get_tree().reload_current_scene()
+
+func title_new(slot: int) -> void:
+	Sfx.title_bgm(false)
+	Game.new_game(slot)
+	Game.skip_title = true
+	Game.need_intro = true
+	get_tree().reload_current_scene()
+
+func return_to_title() -> void:
+	Sfx.title_bgm(false)
+	Game.skip_title = false
+	get_tree().reload_current_scene()
 
 # ================================================================ 마을 (좌⅓ — 주민 수가 곧 진행바)
 
@@ -357,9 +449,11 @@ func world_to_screen(p: Vector2) -> Vector2:
 # ================================================================ loop
 
 func _process(delta: float) -> void:
+	if _title_mode:
+		return  # 타이틀 상태 — 세계는 새벽 속에 잠들어 있다
 	_full_msg_cd = maxf(0.0, _full_msg_cd - delta)
 	_update_hover()
-	if _wipe_lock:
+	if _wipe_lock or _ending_playing:
 		return
 
 	_monster_timer -= delta
@@ -484,10 +578,18 @@ func _notification(what: int) -> void:
 # ================================================================ input (몸=Space / 시선=클릭)
 
 func _unhandled_input(event: InputEvent) -> void:
+	if _title_mode:
+		if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_SPACE:
+			_title_space()
+		return
 	if event is InputEventKey and event.pressed and not event.echo:
 		match event.keycode:
 			KEY_ESCAPE:
-				hud.close_menu()
+				# 메뉴가 열려 있으면 닫고, 아니면 옵션 (v3.3 §D)
+				if hud.is_menu_open():
+					hud.close_menu()
+				elif not _ending_playing:
+					hud.open_options(true)
 			KEY_SPACE:
 				_space_interact()
 			KEY_F11:
@@ -500,7 +602,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		_gaze_click(get_global_mouse_position())
 
 func _space_interact() -> void:
-	if _wipe_lock:
+	if _wipe_lock or _ending_playing:
 		return
 	if hud.is_menu_open():
 		hud.close_menu()
@@ -522,7 +624,7 @@ func _space_interact() -> void:
 
 func _gaze_click(pos: Vector2) -> void:
 	# 시선(클릭) — 파티 위치와 무관: 대장간 불·카지노 (한 화면이라 도크가 필요 없다)
-	if _wipe_lock or hud.is_menu_open():
+	if _wipe_lock or _ending_playing or _title_mode or hud.is_menu_open():
 		return
 	# 합체기 — 빛나는 파티를 클릭하면 터진다 (v3.1 §B-4)
 	if party.combo_glow and pos.distance_to(party.head_pos) < 22.0:
@@ -1609,9 +1711,8 @@ func _on_boss_defeated(field: int) -> void:
 		boss_node.queue_free()
 	boss_node = null
 	if field >= 4:
-		Sfx.play("fanfare_big")
 		Game.save_game()
-		hud.show_ending(_do_prestige, _do_continue)
+		_play_ending()
 		return
 	# v3.2 훈장 재배선: 초원=바람 / 숲=불복종 / 동굴=무리 사냥꾼+일기토 / 수중=천리안
 	var medal_by_field := ["wind_sign", "disobedience", "pack_hunter", "clairvoyance"]
@@ -1659,12 +1760,116 @@ func _on_boss_defeated(field: int) -> void:
 
 func _do_prestige() -> void:
 	Game.do_prestige()
+	Game.skip_title = true  # 2주차는 타이틀 없이 바로 새 아침으로
 	get_tree().reload_current_scene()
 
-func _do_continue() -> void:
-	Game.ending_seen = true
-	Game.save_game()
-	hud.event("세계는 평화롭다. …일행은 계속 걷는다.", 4.0)
+# ================================================================ 엔딩 (v3.3 §F — 수미상관)
+
+func _play_ending() -> void:
+	# 1) 결계 붕괴 → 2) 마지막 산책 → 3) 광장 인구조사 → 4) 크레딧 → 5) "오랜만에 늦잠을 잤다."
+	_ending_playing = true
+	hud.close_menu()
+	_close_all_windows()
+	Sfx.play("palette")
+	hud.event("마왕성의 결계가 소리 없이 무너져 내린다…", 4.5)
+	# 필드를 비운다 — 돌아가는 길은 평화롭다
+	for m in get_tree().get_nodes_in_group("monster"):
+		if is_instance_valid(m):
+			m.queue_free()
+	# 마지막 산책 — 파티가 스스로 마을로 걸어 돌아온다
+	get_tree().create_timer(2.0).timeout.connect(func():
+		party.frozen = false
+		party.manual_hold = 0.0
+		party.target_node = null
+		party.target_point = Vector2(120, 210)
+		hud.event("일행은 왔던 길을 천천히 걸어 돌아간다.", 4.0))
+	get_tree().create_timer(8.0).timeout.connect(_ending_gather)
+
+func _ending_gather() -> void:
+	# 광장 집합 — 이번 모험에서 실제로 모은 사람들만 서 있다 (내 플레이의 인구조사)
+	party.frozen = true
+	hud.fade_quick(func():
+		party.teleport(Vector2(108, 230))
+		var spots: Array = []
+		for gy in 3:
+			for gx in 6:
+				spots.append(Vector2(38 + gx * 29, 156 + gy * 30))
+		var idx := 0
+		# 주민들
+		for r in RESIDENTS:
+			if Game.residents.get(r["id"], false) and idx < spots.size():
+				_ending_cast_sprite("res://assets/NPCs/village_chief.png",
+					Color(randf_range(0.7, 1.0), randf_range(0.7, 1.0), randf_range(0.7, 1.0)), spots[idx])
+				idx += 1
+		# 동료들 (파티는 이미 서 있다 — 대기 인원만)
+		for cid in Game.COMPANIONS.keys():
+			if Game.companions_owned.get(cid, false) and not Game.party_ids.has(cid) and idx < spots.size():
+				var d: Dictionary = Game.COMPANIONS[cid]
+				_ending_cast_sprite(String(d["tex"]), d.get("tint", Color(1, 1, 1)), spots[idx], int(d["frame_h"]))
+				idx += 1
+		# 엄마와 촌장은 언제나 그 자리에 (기본 거주자)
+		Sfx.play("fanfare_big"))
+	get_tree().create_timer(2.5).timeout.connect(func():
+		hud.event("촌장: 「%s… 아니, 용사여. 마을은, 세계는 당신 덕에 살아났습니다.」" % Game.hn(), 5.0))
+	get_tree().create_timer(7.0).timeout.connect(func():
+		var title_line := ""
+		if Game.current_title() != "":
+			title_line = "「%s」라 불린 " % Game.current_title()
+		hud.event("엄마: 「%s우리 %s. …고생했어. 이제 좀 자렴.」" % [title_line, Game.hn()], 5.5))
+	get_tree().create_timer(12.5).timeout.connect(_ending_credits)
+
+func _ending_cast_sprite(tex_path: String, tint: Color, pos: Vector2, frame_h: int = 26) -> void:
+	var s := Sprite2D.new()
+	s.texture = load(tex_path)
+	if s.texture.get_width() > 40:  # 캐릭터 시트면 프레임 컷
+		s.hframes = 3
+		s.vframes = 4
+		s.frame = 1
+	s.modulate = tint
+	s.offset = Vector2(0, -frame_h / 2.0)
+	s.position = pos
+	s.add_to_group("ending_cast")
+	base_root.add_child(s)
+	s.scale = Vector2(1.0, 0.05)
+	var tw := create_tween()
+	tw.tween_property(s, "scale", Vector2.ONE, 0.4).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+func _ending_credits() -> void:
+	# 크레딧 — 별도 씬 없음. 마을 위로 흐른다
+	var credits := [
+		"Appears! Appears! Appears!",
+		"— A AAA Incremental JRPG —",
+		"",
+		"기획 · 디렉션",
+		"잠에서 깬 용사 본인",
+		"",
+		"구현 · 임시 도트 · 임시 사운드",
+		"클로드 (야근)",
+		"",
+		"세계를 구한 사람",
+		"%s (Lv %d)" % [Game.hn(), Game.level],
+		"",
+		"플레이타임  %d분" % int(Game.playtime / 60.0),
+		"쓰러뜨린 몬스터  %d마리" % Game.kills,
+		"깨뜨린 항아리  %d개" % int(Game.stats["pots"]),
+		"",
+		"Special Thanks",
+		"엄마",
+		"",
+		"— 세계는 아침을 되찾았다 —",
+	]
+	hud.roll_credits(credits, func():
+		hud.fade_black("그리고 %s는, 오랜만에 늦잠을 잤다." % Game.hn(), 4.0, func():
+			# 크레딧 후 — 조용히. 팡파레 없음 (v3.3 §F-6)
+			for s in get_tree().get_nodes_in_group("ending_cast"):
+				if is_instance_valid(s):
+					s.queue_free()
+			Game.ending_seen = true
+			Game.save_game()
+			_ending_playing = false
+			party.frozen = false
+			hud.event("…교회의 신부가 조용히 고개를 끄덕인다. (2주차 모험)", 5.0))
+		)
 
 # ================================================================ 전멸
 

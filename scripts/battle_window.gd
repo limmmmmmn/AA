@@ -201,12 +201,19 @@ func _type_tick(delta: float) -> void:
 			_lines.pop_front()
 	if _typing == "":
 		return
+	# 텍스트 속도 옵션: 순간 = 즉시 커밋 (v3.3 §D)
+	var tmult: float = Game.opt_type_mult()
+	if tmult <= 0.0:
+		_lines[_lines.size() - 1] = _typing
+		_typing = ""
+		_update_log()
+		return
 	# 큐가 밀릴수록 타자가 빨라진다
-	var interval := 0.028
+	var interval := 0.028 * tmult
 	if _msg_queue.size() >= 3:
-		interval = 0.008
+		interval = 0.008 * tmult
 	elif _msg_queue.size() >= 1:
-		interval = 0.014
+		interval = 0.014 * tmult
 	_type_t += delta
 	while _type_t >= interval and _typed < _typing.length():
 		_type_t -= interval
@@ -270,9 +277,10 @@ func _on_enemy_hit(index: int, _dmg: int, crit: bool, dead: bool) -> void:
 	var base: Vector2 = _enemy_base_pos[index]
 	node.position = base + Vector2(randf_range(-3, 3), randf_range(-2, 2))
 	tw.parallel().tween_property(node, "position", base, 0.12)
-	var tw3 := create_tween()
-	position = _base_position + Vector2(randf_range(-1.5, 1.5), randf_range(-1.5, 1.5))
-	tw3.tween_property(self, "position", _base_position, 0.08)
+	if Game.opt["shake"]:
+		var tw3 := create_tween()
+		position = _base_position + Vector2(randf_range(-1.5, 1.5), randf_range(-1.5, 1.5))
+		tw3.tween_property(self, "position", _base_position, 0.08)
 	_popup(str(_dmg), node.position + Vector2(node.size.x / 2.0, -4), UILib.COL_GOLD if crit else UILib.COL_WHITE, 12 if crit else 10)
 	if dead:
 		var tw2 := create_tween()
@@ -285,10 +293,11 @@ func _on_member_hit(_idx: int, _dmg: int, fell: bool) -> void:
 	Sfx.play("hurt", randf_range(0.9, 1.05))
 	if fell:
 		Sfx.play("ghost")
-	# 창 흔들림 — "여기서 맞았다"
-	var tw := create_tween()
-	position = _base_position + Vector2(randf_range(-3, 3), randf_range(-3, 3))
-	tw.tween_property(self, "position", _base_position, 0.15)
+	# 창 흔들림 — "여기서 맞았다" (접근성 옵션으로 끌 수 있다)
+	if Game.opt["shake"]:
+		var tw := create_tween()
+		position = _base_position + Vector2(randf_range(-3, 3), randf_range(-3, 3))
+		tw.tween_property(self, "position", _base_position, 0.15)
 
 func _popup(text: String, at: Vector2, color: Color, fsize: int = 10) -> void:
 	var l := UILib.make_label(text, fsize, color)

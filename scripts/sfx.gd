@@ -20,7 +20,12 @@ func _ready() -> void:
 	_gaze_player = AudioStreamPlayer.new()
 	_gaze_player.volume_db = -26.0
 	add_child(_gaze_player)
+	_bgm_player = AudioStreamPlayer.new()
+	_bgm_player.volume_db = -18.0
+	add_child(_bgm_player)
 	_build_all()
+
+var _bgm_player: AudioStreamPlayer
 
 func gaze_loop(on: bool) -> void:
 	# 주시 중 반짝이는 루프음 — 켜진 창이 하나라도 있으면 재생 (v3.1 §B-7-1)
@@ -34,13 +39,40 @@ func gaze_loop(on: bool) -> void:
 func play(name: String, pitch: float = 1.0, vol_db: float = 0.0) -> void:
 	if not _streams.has(name):
 		return
+	var base := -8.0
+	var g := get_node_or_null("/root/Game")
+	if g != null:
+		base = g.opt_sfx_db()
+		if base <= -79.0:
+			return  # 음소거
 	var p := _pool[_pool_idx]
 	_pool_idx = (_pool_idx + 1) % POOL_SIZE
 	p.stop()
 	p.stream = _streams[name]
 	p.pitch_scale = pitch
-	p.volume_db = -8.0 + vol_db
+	p.volume_db = base + vol_db
 	p.play()
+
+func title_bgm(on: bool) -> void:
+	# 타이틀 BGM — 메인 테마의 새벽 어레인지 (v3.3 §B, 절차 합성 임시곡)
+	if on:
+		var g := get_node_or_null("/root/Game")
+		_bgm_player.volume_db = g.opt_bgm_db() if g != null else -18.0
+		if _bgm_player.volume_db <= -79.0:
+			_bgm_player.stop()
+			return
+		if not _bgm_player.playing:
+			_bgm_player.stream = _streams.get("title_theme")
+			_bgm_player.play()
+	else:
+		_bgm_player.stop()
+
+func refresh_bgm_volume() -> void:
+	var g := get_node_or_null("/root/Game")
+	if g != null and _bgm_player.playing:
+		_bgm_player.volume_db = g.opt_bgm_db()
+		if _bgm_player.volume_db <= -79.0:
+			_bgm_player.stop()
 
 # ---------------------------------------------------------------- synthesis
 
@@ -191,3 +223,18 @@ func _build_all() -> void:
 	_streams["bank"] = _to_stream(_concat([_tone(1319.0, 0.05, 0.3, "square"), _silence(0.04), _tone(1568.0, 0.05, 0.3, "square"), _silence(0.04), _tone(1976.0, 0.12, 0.3, "square")]))
 	# 벽 속 목소리 (우웅…)
 	_streams["voice"] = _to_stream(_tone(196.0, 0.6, 0.3, "sine", 40.0, 2.0))
+	# 타이틀 테마 — 새벽 어레인지 (조용한 트라이앵글 아르페지오, 루프)
+	var theme_notes := [
+		[262.0, 0.42], [330.0, 0.42], [392.0, 0.42], [523.0, 0.84],
+		[494.0, 0.42], [392.0, 0.42], [330.0, 0.42], [294.0, 0.84],
+		[262.0, 0.42], [330.0, 0.42], [440.0, 0.42], [523.0, 0.84],
+		[494.0, 0.42], [440.0, 0.42], [392.0, 0.42], [392.0, 0.84],
+		[0.0, 0.6],
+	]
+	var theme := _melody(theme_notes, "tri", 0.22)
+	# 5도 아래 패드를 얇게 겹친다 — 새벽의 공기
+	theme = _mix(theme, _melody([[131.0, 3.3], [147.0, 3.3], [131.0, 3.4]], "sine", 0.10), 0.0)
+	var theme_stream := _to_stream(theme)
+	theme_stream.loop_mode = AudioStreamWAV.LOOP_FORWARD
+	theme_stream.loop_end = theme.size()
+	_streams["title_theme"] = theme_stream

@@ -365,6 +365,45 @@ func _run() -> void:
 	assert(int(Game.stats["pots"]) == pots_n)
 	assert(Game.casino_up["hold"] == 1)
 	print("[SMOKE] 세이브/로드 OK (v6)")
+
+	# 17) v3.3 — 세이브 슬롯 메타 + 옵션 ConfigFile
+	var meta: Dictionary = Game.slot_meta(Game.save_slot)
+	assert(meta["exists"] and String(meta["name"]) == "테스트용사")
+	assert(int(meta["revival"]) >= 2)
+	var ts_save: int = int(Game.opt["text_speed"])
+	Game.opt["text_speed"] = 0
+	Game.save_options()
+	Game.opt["text_speed"] = 2
+	Game.load_options()
+	assert(int(Game.opt["text_speed"]) == 0)
+	Game.opt["text_speed"] = ts_save
+	Game.save_options()
+	print("[SMOKE] 슬롯 메타/옵션 OK — %s Lv%d 부흥%d" % [meta["name"], meta["level"], meta["revival"]])
+
+	# 18) v3.3 — 엔딩 수미상관 (마왕 격파 → 산책 → 광장 집합 → 크레딧 → 늦잠)
+	main._on_boss_defeated(4)
+	await get_tree().create_timer(14.0).timeout
+	assert(main._ending_playing)
+	assert(get_tree().get_nodes_in_group("ending_cast").size() >= 3)  # 내가 모은 사람들
+	print("[SMOKE] 엔딩 광장 집합 OK — %d명" % get_tree().get_nodes_in_group("ending_cast").size())
+	await get_tree().create_timer(62.0).timeout
+	assert(Game.ending_seen)
+	assert(not main._ending_playing)
+	print("[SMOKE] 엔딩/크레딧 OK — 늦잠까지 확인")
+
+	# 19) v3.3 — 2주차 모험 (뉴게임+ — 배율 없음, 시작 부스트만)
+	var medals_n: int = Game.medals_owned.size()
+	var titles_keep: int = Game.titles.size()
+	Game.do_prestige()
+	assert(Game.run_count == 2)
+	assert(Game.gold == 500)                                # 시작 부스트: 여비
+	assert(Game.companions_owned.get("knight", false))      # 시작 부스트: 배웅 나온 기사
+	assert(Game.medals_owned.size() == medals_n)            # 훈장 영구
+	assert(Game.titles.size() == titles_keep)               # 칭호 영구
+	assert(Game.hero_name == "테스트용사")                  # 이름 영구
+	assert(Game.max_windows() <= 4)  # 회차 보너스는 +1 캡 (배율/누적 없음)
+	print("[SMOKE] 2주차 모험 OK — 배율 없음, 부스트만")
+
 	print("[SMOKE] 전부 통과!")
 	get_tree().quit()
 

@@ -11,8 +11,58 @@ signal upgrades_changed
 
 const MAX_WINDOWS_HARD := 8
 
-# 스모크 테스트는 별도 세이브를 쓴다 — 유저의 진짜 세이브를 건드리지 않도록
-var save_path := "user://appears_save.json"
+# ---------------------------------------------------------------- 세이브 3슬롯 (v3.3 §C — 드퀘3 문법)
+var save_slot := 1
+var save_path := "user://appears_save_1.json"
+# 타이틀→게임 전환용 일시 플래그 (저장 안 함)
+var skip_title := false   # 씬 리로드 후 타이틀 건너뛰고 바로 게임
+var need_intro := false   # 새 모험 — 이름 입력+인트로부터
+
+func set_slot(i: int) -> void:
+	save_slot = clampi(i, 1, 3)
+	save_path = "user://appears_save_%d.json" % save_slot
+
+# ---------------------------------------------------------------- 옵션 (v3.3 §D — 세이브와 분리, 전 슬롯 공통)
+var opt := {"bgm": 6, "sfx": 8, "fullscreen": false, "text_speed": 2, "shake": true, "lang": "ko"}
+const OPT_PATH := "user://options.cfg"
+
+func load_options() -> void:
+	var cf := ConfigFile.new()
+	if cf.load(OPT_PATH) != OK:
+		return
+	for k in opt.keys():
+		opt[k] = cf.get_value("opt", k, opt[k])
+	save_slot = int(cf.get_value("opt", "last_slot", 1))
+	set_slot(save_slot)
+	apply_options()
+
+func save_options() -> void:
+	var cf := ConfigFile.new()
+	for k in opt.keys():
+		cf.set_value("opt", k, opt[k])
+	cf.set_value("opt", "last_slot", save_slot)
+	cf.save(OPT_PATH)
+
+func apply_options() -> void:
+	var full: bool = opt["fullscreen"]
+	var mode := DisplayServer.window_get_mode()
+	if full and mode != DisplayServer.WINDOW_MODE_FULLSCREEN:
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
+	elif not full and mode == DisplayServer.WINDOW_MODE_FULLSCREEN:
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
+
+func opt_sfx_db() -> float:
+	return -80.0 if int(opt["sfx"]) <= 0 else -8.0 + (int(opt["sfx"]) - 8) * 3.0
+
+func opt_bgm_db() -> float:
+	return -80.0 if int(opt["bgm"]) <= 0 else -18.0 + (int(opt["bgm"]) - 6) * 3.0
+
+func opt_type_mult() -> float:
+	# 텍스트 속도: 0 순간 / 1 빠름 / 2 보통
+	match int(opt["text_speed"]):
+		0: return 0.0
+		1: return 0.45
+	return 1.0
 
 # ---------------------------------------------------------------- 동료 로스터 (v3.1 §B-3 — 정규 7 + 객원 11)
 ## regular = 시그니처 무기 보유 (대장간 강화 대상). 객원은 공용 티어 (무기 없음).
@@ -360,8 +410,135 @@ func poster_cost(field: int, i: int) -> int:
 # ---------------------------------------------------------------- init
 
 func _ready() -> void:
+	load_options()
+	_migrate_legacy_save()
 	_reset_party()
 	load_game()
+
+func _migrate_legacy_save() -> void:
+	# v3.2 이전 단일 세이브 → 슬롯 1로 이사 (v3.3)
+	if FileAccess.file_exists("user://appears_save.json") and not FileAccess.file_exists("user://appears_save_1.json"):
+		var f := FileAccess.open("user://appears_save.json", FileAccess.READ)
+		if f:
+			var txt := f.get_as_text()
+			f.close()
+			var g := FileAccess.open("user://appears_save_1.json", FileAccess.WRITE)
+			if g:
+				g.store_string(txt)
+				g.close()
+
+func slot_meta(i: int) -> Dictionary:
+	# 슬롯 목록 표시용 경량 메타 (v3.3 §C)
+	var p := "user://appears_save_%d.json" % i
+	if not FileAccess.file_exists(p):
+		return {"exists": false}
+	var f := FileAccess.open(p, FileAccess.READ)
+	if f == null:
+		return {"exists": false}
+	var parsed = JSON.parse_string(f.get_as_text())
+	f.close()
+	if not parsed is Dictionary:
+		return {"exists": false}
+	var d: Dictionary = parsed
+	var joins := 0
+	var res: Dictionary = d.get("residents", {})
+	for k in res.keys():
+		if res[k]:
+			joins += 1
+	var comp: Dictionary = d.get("companions_owned", {})
+	for k in comp.keys():
+		if comp[k]:
+			joins += 1
+	joins = maxi(0, joins - 1)  # 용사 제외
+	var stage := 0
+	for t in [3, 7, 10, 15]:
+		if joins >= t:
+			stage += 1
+	return {
+		"exists": true,
+		"name": String(d.get("hero_name", "늦잠꾸러기")),
+		"level": int(d.get("level", 1)),
+		"playtime": float(d.get("playtime", 0.0)),
+		"revival": stage,
+		"run": int(d.get("run_count", 1)),
+	}
+
+func new_game(slot: int) -> void:
+	# "처음부터 시작한다" — 슬롯 하나를 완전한 백지로 (v3.3)
+	set_slot(slot)
+	if FileAccess.file_exists(save_path):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path))
+	reset_all()
+	save_options()  # last_slot 기억
+
+func continue_game(slot: int) -> void:
+	set_slot(slot)
+	reset_all()
+	load_game()
+	save_options()
+
+func reset_all() -> void:
+	# 새 모험의 백지 상태 — 모든 것이 기본값으로 (2주차와 달리 영구물도 지운다)
+	gold = 0
+	total_earned = 0
+	level = 1
+	exp = 0
+	run_count = 1
+	kills = 0
+	coins = 0
+	holy = 12.0
+	deposit = 0
+	for k in up.keys():
+		up[k] = 0
+	for k in assistants.keys():
+		assistants[k] = 0
+	fields_unlocked = [true, false, false, false, false]
+	bosses_defeated = [false, false, false, false, false]
+	posters_f = [0, 0, 0, 0, 0]
+	extra_pots = 0
+	buildings = {"inn": false, "board": false, "church": false, "smith": false, "chest": false, "casino": false, "bard": false, "medalking": false, "shop": false, "bank": false}
+	recruits_spawned = {"knight": false, "mage": false, "priest": false, "warrior": false, "monkf": false}
+	discovered = {}
+	golden_first_done = false
+	golden_info = false
+	ending_seen = false
+	residents = {}
+	kill_counts = {}
+	medals_small = 0
+	medals_spent = 0
+	keys = {"thief": false, "magic": false}
+	opened = {"warehouse": false, "redchest": false}
+	signpost_seen = false
+	ui_unlocked = {"desc": false, "gold": false, "party": false, "quest": false}
+	epic_verses = 0
+	smith_perfects = 0
+	casino_wincap = 0
+	medals_owned = []
+	medals_equipped = []
+	companions_owned = {"hero": true}
+	party_ids = ["hero"]
+	companion_weapons = {}
+	book_seen = {"hero": true}
+	combo_gauge = 0.0
+	combo_hint_known = false
+	charmed = []
+	thief_away = false
+	thief_return_at = 0.0
+	sword_rock = 0
+	playtime = 0.0
+	hero_name = ""
+	current_field = 0
+	tactic = ""
+	tactic_known = false
+	roto_shield = false
+	roto_helm = false
+	lunch_until = 0.0
+	silver_seen = false
+	titles = []
+	casino_up = {"jackpot": 0, "consol": 0, "hold": 0}
+	for k in stats.keys():
+		stats[k] = 0
+	_reset_party()
 
 func _reset_party() -> void:
 	companions_owned = {"hero": true}
@@ -547,7 +724,8 @@ func add_combo_gauge() -> void:
 	combo_gauge = minf(1.0, combo_gauge + 0.08)
 
 func max_windows() -> int:
-	var n: int = 1 + up["win_cap"] + (run_count - 1) + casino_wincap
+	# v3.3 §A 철칙 3: 회차 보너스는 소폭 시작 부스트까지만 (+1 캡)
+	var n: int = 1 + up["win_cap"] + mini(run_count - 1, 1) + casino_wincap
 	if medal_on("watch_eye"):
 		n += 1
 	if medal_on("coward_flag"):
@@ -577,7 +755,8 @@ func turn_interval() -> float:
 	return t
 
 func gold_multiplier() -> float:
-	var g := pow(1.15, up["gold_mult"]) * (1.0 + 0.2 * (run_count - 1))
+	# v3.3 §A: 회차 배율 스케일링 금지 — 프레스티지 수학이 침투하면 2주차가 의무가 된다
+	var g := pow(1.15, up["gold_mult"])
 	if medal_on("aqua_regia"):
 		g *= 2.0
 	var steal_s := passive_scale("steal")
@@ -803,6 +982,8 @@ func unlock_field(i: int) -> void:
 	chapter_changed.emit(progress_tier())
 
 func do_prestige() -> void:
+	# v3.3 §A: 프레스티지가 아니라 뉴게임+ ("2주차 모험" — 크로노 트리거 문법)
+	# 배율 없음. 보상 = 소폭 시작 부스트(초기 골드·시작 동료·훈장 슬롯 +1) + 회차 콘텐츠 개봉
 	run_count += 1
 	gold = 0
 	total_earned = 0
@@ -847,6 +1028,9 @@ func do_prestige() -> void:
 	casino_up = {"jackpot": 0, "consol": 0, "hold": 0}
 	# 영구 유지: 훈장 도감/장착, 서사시 이력, 도감(discovered), 필살작 기록, 카지노 상한, book_seen, combo_hint_known, hero_name, titles, stats, tactic_known
 	_reset_party()
+	# 2주차 시작 부스트 — 기사가 배웅 나와 있고, 엄마가 여비를 찔러준다
+	gold = 500
+	own_companion("knight")
 	save_game()
 	gold_changed.emit(gold)
 	chapter_changed.emit(progress_tier())

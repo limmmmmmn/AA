@@ -178,7 +178,7 @@ func _process(delta: float) -> void:
 		_xp_bar.size = Vector2(w * clampf(float(Game.exp) / maxf(1.0, float(Game.exp_to_next())), 0.0, 1.0), 2)
 	# 성수 — 자동 재생 / 치유의 눈길 호버 시 소모하며 회복 (v3.1 §B-7-4)
 	if Game.buildings["church"]:
-		if not _holy_panel.visible and Game.ui_unlocked["desc"]:
+		if not _holy_panel.visible and Game.ui_unlocked["desc"] and not _title_suppress:
 			_holy_panel.visible = true
 			_birth_pop(_holy_panel)
 		var healing := false
@@ -336,6 +336,8 @@ func _rebuild_members() -> void:
 		bar_bg.add_child(bar)
 		_member_boxes.append({"panel": p, "name": name_l, "hp": hp_l, "bar": bar})
 		_update_member(i)
+		if _title_suppress:
+			p.visible = false  # 타이틀 상태 — HUD는 잠든다
 
 func _update_member(i: int) -> void:
 	if i >= _member_boxes.size():
@@ -875,10 +877,11 @@ func open_church() -> void:
 	if Game.up["heal_eye"] > 0 or Game.up["golden_hands"] > 0:
 		_up_row(v, "holy_max", "성수 그릇", "성수 최대치 +4초", 100, 1.7, 4, 0)
 		_up_row(v, "holy_regen", "샘의 축복", "성수가 차오르는 속도 +35%", 130, 1.7, 4, 0)
-	_menu_row(v, "모험의 서에 기록한다", "다음 회차로 — 훈장·서사시는 남는다",
-		"기록" if Game.bosses_defeated[4] or Game.ending_seen else "마왕 처치 후",
-		Game.bosses_defeated[4] or Game.ending_seen,
-		func(): main._do_prestige())
+	# v3.3 §F: "프레스티지/회차" 금지 → "2주차 모험". 크레딧을 본 뒤에만 조용히 등장
+	if Game.ending_seen:
+		_menu_row(v, "%d주차 모험을 떠난다" % (Game.run_count + 1),
+			"새 모험 — 훈장·도감·칭호·서사시는 남는다. 배율 따위는 없다",
+			"떠난다", true, func(): main._do_prestige())
 
 func _church_revive() -> void:
 	var cost := Game.revive_cost()
@@ -1096,6 +1099,69 @@ func _buy_golden_info(cost: int) -> void:
 	Sfx.play("buy")
 	event("금색으로 빛나는 것을 봤다는 소문이다…", 3.0)
 	open_board()
+
+# ---------------------------------------------------------------- 옵션 (v3.3 §D — 이 목록이 전부다)
+
+func open_options(in_game: bool = true) -> void:
+	_menu_kind = "options"
+	var v := _menu_panel("옵션")
+	_opt_slider_row(v, "bgm", "BGM 음량")
+	_opt_slider_row(v, "sfx", "효과음 음량")
+	_menu_row(v, "전체화면: %s" % ("켬" if Game.opt["fullscreen"] else "끔"), "F11로도 전환할 수 있다", "전환", true,
+		func():
+			Game.opt["fullscreen"] = not Game.opt["fullscreen"]
+			Game.apply_options()
+			_opt_save_reopen(in_game))
+	var ts_names := ["순간", "빠름", "보통"]
+	_menu_row(v, "텍스트 속도: %s" % ts_names[int(Game.opt["text_speed"])], "드퀘 감성 보존용 3단", "전환", true,
+		func():
+			Game.opt["text_speed"] = (int(Game.opt["text_speed"]) + 1) % 3
+			_opt_save_reopen(in_game))
+	_menu_row(v, "화면 흔들림: %s" % ("켬" if Game.opt["shake"] else "끔"), "전투 타격감 셰이크 (접근성)", "전환", true,
+		func():
+			Game.opt["shake"] = not Game.opt["shake"]
+			_opt_save_reopen(in_game))
+	_menu_row(v, "언어: 한국어", "English — 번역 준비 중", "—", false, func(): pass)
+	if in_game:
+		_menu_row(v, "타이틀로 돌아간다", "지금까지는 자동 저장되어 있다", "돌아간다", true,
+			func():
+				Game.save_game()
+				Game.save_options()
+				close_menu()
+				if main != null:
+					main.return_to_title())
+
+func _opt_slider_row(v: VBoxContainer, key: String, name_txt: String) -> void:
+	# 0~10 슬라이더 (드퀘 창 문법 — 버튼식)
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 6)
+	v.add_child(h)
+	var val: int = int(Game.opt[key])
+	var l := UILib.make_label("%s  %s%s %d" % [name_txt, "■".repeat(val), "□".repeat(10 - val), val], UILib.FS)
+	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	h.add_child(l)
+	var minus := UILib.make_button("-", UILib.FS)
+	minus.pressed.connect(func(): _opt_vol(key, -1))
+	h.add_child(minus)
+	var plus := UILib.make_button("+", UILib.FS)
+	plus.pressed.connect(func(): _opt_vol(key, 1))
+	h.add_child(plus)
+
+func _opt_vol(key: String, dir: int) -> void:
+	Game.opt[key] = clampi(int(Game.opt[key]) + dir, 0, 10)
+	Game.save_options()
+	if key == "sfx":
+		Sfx.play("click")
+	else:
+		Sfx.refresh_bgm_volume()
+	# 열려 있던 맥락 유지 재오픈
+	var in_game: bool = main == null or not main._title_mode
+	open_options(in_game)
+
+func _opt_save_reopen(in_game: bool) -> void:
+	Game.save_options()
+	Sfx.play("click")
+	open_options(in_game)
 
 # ---------------------------------------------------------------- 은행 (v3.1 §B-8)
 
@@ -1421,35 +1487,107 @@ func _toggle_medal(id: String) -> void:
 		Sfx.play("deny")
 		event("훈장 슬롯이 가득 찼다! (%d개)" % Game.medal_slots())
 
-# ---------------------------------------------------------------- 엔딩
+# ---------------------------------------------------------------- 타이틀 커맨드 (v3.3 §B·C)
 
-func show_ending(on_prestige: Callable, on_continue: Callable) -> void:
-	var r := ColorRect.new()
-	r.color = Color(0, 0, 0, 0)
-	r.set_anchors_preset(Control.PRESET_FULL_RECT)
-	r.mouse_filter = Control.MOUSE_FILTER_STOP
-	_overlay_root.add_child(r)
-	var tw := create_tween()
-	tw.tween_property(r, "color:a", 0.85, 1.5)
-	tw.tween_callback(func():
-		var p := UILib.make_panel(UILib.COL_GOLD)
-		p.position = Vector2(160, 100)
-		p.custom_minimum_size = Vector2(320, 0)
-		r.add_child(p)
-		var v := VBoxContainer.new()
-		v.add_theme_constant_override("separation", 8)
-		p.add_child(v)
-		v.add_child(UILib.make_label("마왕은 쓰러졌다.", UILib.FS))
-		v.add_child(UILib.make_label("세계에 아침이 왔다.", UILib.FS))
-		v.add_child(UILib.make_label("…용사는 내일도 늦잠을 잘 것이다.", UILib.FS, UILib.COL_GRAY))
-		var b1 := UILib.make_button("모험의 서에 기록한다 (다음 회차로)", UILib.FS)
-		b1.pressed.connect(func():
-			r.queue_free()
-			on_prestige.call())
-		v.add_child(b1)
-		var b2 := UILib.make_button("조금 더 논다", UILib.FS)
-		b2.pressed.connect(func():
-			r.queue_free()
-			on_continue.call())
-		v.add_child(b2)
-	)
+func title_hide(on: bool) -> void:
+	# 타이틀 상태 — 마을만 보인다. HUD는 잠든다
+	_title_suppress = on
+	_top_panel.visible = Game.ui_unlocked["gold"] and not on
+	_desc_panel.visible = Game.ui_unlocked["desc"] and not on
+	_holy_panel.visible = Game.buildings["church"] and Game.ui_unlocked["desc"] and not on
+	for b in _member_boxes:
+		if is_instance_valid(b["panel"]):
+			b["panel"].visible = not on
+
+var _title_suppress := false
+
+func open_title_menu() -> void:
+	_menu_kind = "title"
+	var v := _menu_panel("— 모험의 서 —")
+	var any_slot := false
+	for i in [1, 2, 3]:
+		if Game.slot_meta(i).get("exists", false):
+			any_slot = true
+	_menu_row(v, "모험을 계속한다", "잠들어 있던 모험을 이어서", "선택", any_slot,
+		func(): open_title_slots(false))
+	_menu_row(v, "처음부터 시작한다", "새로운 용사가 늦잠에서 깬다", "선택", true,
+		func(): open_title_slots(true))
+	_menu_row(v, "옵션", "음량·화면·텍스트 속도", "열기", true,
+		func(): open_options(false))
+
+func open_title_slots(new_game: bool) -> void:
+	_menu_kind = "title_slots"
+	var v := _menu_panel("모험의 서 — " + ("어디에 기록할까" if new_game else "어느 서를 펼칠까"))
+	for i in [1, 2, 3]:
+		var m: Dictionary = Game.slot_meta(i)
+		if m.get("exists", false):
+			var mins := int(float(m["playtime"]) / 60.0)
+			var label := "서 %d — %s Lv%d" % [i, m["name"], m["level"]]
+			var sub := "%d주차 · 부흥 %d단계 · %d시간 %d분" % [m["run"], m["revival"], mins / 60, mins % 60]
+			if new_game:
+				_menu_row(v, label, sub + " — 여기에 새로 쓰면 지워진다!", "덮어쓴다", true,
+					func(): _title_confirm_overwrite(i))
+			else:
+				_menu_row(v, label, sub, "계속한다", true,
+					func():
+						close_menu()
+						main.title_continue(i))
+		else:
+			if new_game:
+				_menu_row(v, "서 %d — (백지)" % i, "아무것도 적혀 있지 않다", "시작한다", true,
+					func():
+						close_menu()
+						main.title_new(i))
+			else:
+				_menu_row(v, "서 %d — (백지)" % i, "", "—", false, func(): pass)
+	_menu_row(v, "돌아간다", "", "←", true, open_title_menu)
+
+func _title_confirm_overwrite(slot: int) -> void:
+	# 드퀘식 안전장치 — 커서는 기본으로 "아니오"에 (v3.3 §C)
+	_menu_kind = "title_confirm"
+	var v := _menu_panel("정말로 지워도 되겠습니까?")
+	v.add_child(UILib.make_label("서 %d의 모험이 영원히 사라집니다." % slot, UILib.FS, UILib.COL_RED))
+	_menu_row(v, "아니오", "그럴 리가 없다", "돌아간다", true,
+		func(): open_title_slots(true))
+	_menu_row(v, "네", "…각오는 되어 있다", "지운다", true,
+		func():
+			close_menu()
+			main.title_new(slot))
+
+# ---------------------------------------------------------------- 크레딧 (v3.3 §F — 마을이 배경)
+
+func roll_credits(lines: Array, on_done: Callable) -> void:
+	var root := Control.new()
+	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_overlay_root.add_child(root)
+	# 화면이 서서히 밝아지며 (얇은 새벽빛)
+	var lightening := ColorRect.new()
+	lightening.color = Color(1.0, 0.95, 0.85, 0.0)
+	lightening.set_anchors_preset(Control.PRESET_FULL_RECT)
+	lightening.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(lightening)
+	var tw0 := create_tween()
+	tw0.tween_property(lightening, "color:a", 0.22, 8.0)
+	# 텍스트 노드 트윈 — ScrollContainer 아님 (도트 폰트 유지)
+	var total_t := 0.0
+	for li in lines.size():
+		var text: String = lines[li]
+		if text == "":
+			continue
+		var l := UILib.make_label(text, UILib.FS, UILib.COL_GOLD if li == 0 else UILib.COL_WHITE)
+		l.add_theme_color_override("font_outline_color", Color(0, 0, 0))
+		l.add_theme_constant_override("outline_size", 3)
+		l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		root.add_child(l)
+		await get_tree().process_frame
+		l.position = Vector2(320 - l.size.x / 2.0, 372 + li * 22)
+		var travel: float = l.position.y + 40.0
+		var dur := travel / 26.0  # 초속 26px — 읽을 수 있는 속도
+		var tw := create_tween()
+		tw.tween_property(l, "position:y", -30.0, dur)
+		tw.tween_callback(l.queue_free)
+		total_t = maxf(total_t, dur)
+	get_tree().create_timer(total_t + 0.8).timeout.connect(func():
+		root.queue_free()
+		on_done.call())
