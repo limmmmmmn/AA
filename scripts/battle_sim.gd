@@ -41,6 +41,7 @@ func setup(defs: Array, boss: bool) -> void:
 		enemies.append({
 			"name": d["name"],
 			"mid": d.get("id", ""),
+			"family": d.get("family", "slime"),
 			"letter": (LETTERS[i] if defs.size() > 1 else ""),
 			"hp": int(d["hp"]), "max_hp": int(d["hp"]),
 			"atk": int(d["atk"]), "gold": int(d["gold"]), "exp": int(d["exp"]),
@@ -67,14 +68,14 @@ func alive_enemies() -> Array:
 func _tp() -> float:
 	return Game.tactic_power()
 
-func tactic_out_mult() -> float:      # 아군이 주는 데미지
-	match window_tactic:
+func tactic_out_mult(t: String = "") -> float:      # 아군이 주는 데미지 (v3.6: 개별 작전 지원)
+	match (t if t != "" else window_tactic):
 		"attack": return 1.0 + 0.15 * _tp()
 		"gold": return maxf(0.55, 1.0 - 0.15 * _tp())
 	return 1.0
 
-func tactic_in_mult() -> float:       # 아군이 받는 데미지
-	match window_tactic:
+func tactic_in_mult(t: String = "") -> float:       # 아군이 받는 데미지
+	match (t if t != "" else window_tactic):
 		"attack": return 1.0 + 0.2 * _tp()
 		"life": return maxf(0.5, 1.0 - 0.15 * _tp())
 	return 1.0
@@ -140,14 +141,16 @@ func _step() -> void:
 
 func _build_round() -> void:
 	var spirits: bool = Game.medal_on("spirit_party")
-	# 목숨을 소중히 — 사제(기도)가 맨 먼저 움직인다 (v3.2 §B-3)
-	if window_tactic == "life":
-		for i in Game.members.size():
-			if not Game.members[i]["ghost"] and Game.COMPANIONS[Game.members[i]["cls"]]["passive"] == "pray":
-				_queue.append(["m", i])
+	# 목숨을 소중히 — 그 작전을 받은 사제(기도)가 맨 먼저 움직인다 (v3.6: 개별 작전 반영)
+	var first: Array = []
 	for i in Game.members.size():
-		if window_tactic == "life" and not Game.members[i]["ghost"] \
-				and Game.COMPANIONS[Game.members[i]["cls"]]["passive"] == "pray":
+		var m: Dictionary = Game.members[i]
+		if not m["ghost"] and Game.COMPANIONS[m["cls"]]["passive"] == "pray" \
+				and Game.member_tactic_of(String(m["cls"]), window_tactic) == "life":
+			first.append(i)
+			_queue.append(["m", i])
+	for i in Game.members.size():
+		if first.has(i):
 			continue  # 이미 앞줄에 세웠다
 		if not Game.members[i]["ghost"] or spirits:
 			_queue.append(["m", i])
@@ -220,6 +223,9 @@ func _roll_damage(idx: int, mult: float, crit_bonus: float) -> Array:
 	var atk := Game.member_atk(idx)
 	var crit := randf() < (Game.member_crit(idx) + crit_bonus)
 	var dmg := int(maxf(1.0, atk * mult * randf_range(0.85, 1.15))) * (2 if crit else 1)
+	# v3.6: 공격자 본인의 작전이 데미지를 정한다 (개별 지시 > 창의 작전)
+	var mt: String = Game.member_tactic_of(String(Game.members[idx]["cls"]), window_tactic)
+	dmg = int(maxf(1.0, dmg * tactic_out_mult(mt)))
 	return [dmg, crit]
 
 func _apply_enemy_damage(i: int, dmg: int, crit: bool, log_line: bool) -> void:
@@ -234,13 +240,16 @@ func _apply_enemy_damage(i: int, dmg: int, crit: bool, log_line: bool) -> void:
 	# 무리 사냥꾼 — 적 4마리 이상인 창에서 +50% (v3.2 조건형)
 	if Game.medal_on("pack_hunter") and enemies.size() >= 4:
 		dmg = int(dmg * 1.5)
-	dmg = int(dmg * tactic_out_mult())
 	e["hp"] = maxi(0, e["hp"] - dmg)
 	var dead: bool = e["hp"] == 0
 	if dead:
 		e["dead"] = true
 	if log_line:
-		line.emit("%s에 %d!" % [display_name(e), dmg])
+		# v3.8 §B-1: 준 데미지 = 크림(기본), 크리티컬 = 금 + [slam] 자동
+		if crit:
+			line.emit("%s에 [slam][color=#f5c542]%d[/color][/slam]!" % [display_name(e), dmg])
+		else:
+			line.emit("%s에 %d!" % [display_name(e), dmg])
 	if dead:
 		line.emit("%s을(를)" % display_name(e))
 		line.emit("쓰러뜨렸다!")
@@ -255,7 +264,9 @@ func _enemy_act(i: int) -> void:
 	if t < 0:
 		return
 	enemy_acted.emit(i)
-	var dmg := int(maxf(1.0, e["atk"] * randf_range(0.8, 1.2) * tactic_in_mult()))
+	# v3.6: 맞는 쪽의 작전이 피격량을 정한다 (목숨을 소중히 = 그 사람만 덜 맞는다)
+	var tt: String = Game.member_tactic_of(String(Game.members[t]["cls"]), window_tactic)
+	var dmg := int(maxf(1.0, e["atk"] * randf_range(0.8, 1.2) * tactic_in_mult(tt)))
 	line.emit("%s의 공격!" % display_name(e))
 	Game.damage_member(t, dmg)
 	var fell: bool = Game.members[t]["ghost"]

@@ -1,24 +1,114 @@
 class_name UILib
-## 드퀘식 UI 헬퍼 + 커서 4종 (전부 코드 생성 — 나중에 png로 교체하면 됨)
+## 드퀘식 UI 헬퍼 + 커서 4종 (커서는 코드 생성 — 나중에 png로 교체하면 됨)
+## v3.5 리팩터: 스타일의 원본은 이제 에디터에서 편집하는 리소스/컴포넌트다.
+##  - 폰트/버튼/패널 기본값 → res://assets/ui/theme.tres (프로젝트 전역 테마)
+##  - 도트 렌더링(AA 끔) → 폰트 임포트 설정 (DungGeunMo.ttf.import)
+##  - 이중 테두리 창 → DQPanel 컴포넌트 (scripts/dq_panel.gd, 에디터 배치 가능)
+## 아래 헬퍼들은 "코드에서 동적으로 만들 때"의 얇은 편의 함수일 뿐이다.
 
 const FONT := preload("res://assets/fonts/DungGeunMo.ttf")
 const FS := 10  # 기본 폰트 크기 — 10px + AA 끔이 1배수 도트와 가장 잘 어울린다
 
-static var FONT_PX: FontFile = _make_px_font()
+static var FONT_PX: FontFile = FONT  # 하위 호환 별칭 — AA 끔은 임포트 설정이 담당
 
-static func _make_px_font() -> FontFile:
-	var f: FontFile = FONT.duplicate()
-	f.antialiasing = TextServer.FONT_ANTIALIASING_NONE
-	f.hinting = TextServer.HINTING_NORMAL
-	f.subpixel_positioning = TextServer.SUBPIXEL_POSITIONING_DISABLED
-	return f
+# v3.7 팔레트 확정 (GDD v3.5 §B — "드퀘의 문법, Titanium Court의 연기")
+const COL_WHITE := Color("f4f0e0")             # 크림 — 본문/인셋 보더
+const COL_GOLD := Color("f5c542")              # 금색 — 강조
+const COL_GRAY := Color("8b8fa3")              # 흐린 청회색 — 비활성/잠금
+const COL_BG := Color(0.102, 0.11, 0.173, 0.93)  # #1a1c2c 짙은 남색 (필드가 은은히 비침)
+const COL_RED := Color("ef476f")               # 경고/위험
+const COL_GREEN := Color("8ac926")             # HP바 라임
 
-const COL_WHITE := Color(0.95, 0.95, 0.92)
-const COL_GOLD := Color(1.0, 0.83, 0.29)
-const COL_GRAY := Color(0.55, 0.55, 0.55)
-const COL_BG := Color(0.03, 0.03, 0.08, 0.94)
-const COL_RED := Color(0.95, 0.35, 0.3)
-const COL_GREEN := Color(0.4, 0.9, 0.5)
+## 전투창 계열색 (§B — 아트보드 04의 다채색, 중명도·고채도 팝)
+const FAMILY_COLORS := {
+	"slime": Color("3fb8af"),   # 슬라임계 청록
+	"beast": Color("9b5de5"),   # 야수/박쥐계 퍼플
+	"plant": Color("8ac926"),   # 식물계 라임
+	"undead": Color("5c6b9e"),  # 언데드계 재색 남보라
+	"fire": Color("ff9f2e"),    # 화염/마족계 주황
+	"water": Color("4fc4f7"),   # 수중계 하늘
+}
+
+static func family_color(fam: String) -> Color:
+	return FAMILY_COLORS.get(fam, FAMILY_COLORS["slime"])
+
+## 동료 직업색 (v3.8 §B-1)
+const CLASS_COLORS := {
+	"hero": "f5c542", "knight": "4fc4f7", "priest": "f7e08a",
+	"mage": "9b5de5", "thief": "3fb8af", "monkf": "ff9f2e", "warrior": "8ac926",
+}
+
+# ---------------------------------------------------------------- 자동 채색 (v3.8 §B-1 — 수동 태그가 아니라 시스템)
+
+static var _rx_gold: RegEx = null
+static var _rx_taken: RegEx = null
+static var _name_map: Array = []   # [[이름, 헥사색]] — 긴 이름 먼저
+
+static func _ensure_colorizer() -> void:
+	if _rx_gold != null:
+		return
+	_rx_gold = RegEx.new()
+	_rx_gold.compile(r"(\+?\d[\d,]*)\s*G\b")
+	_rx_taken = RegEx.new()
+	_rx_taken.compile(r"에게 (\d+)!")
+	# 이름 사전 — 몬스터(계열색) + 동료(직업색). 긴 이름부터 치환해야 부분 매칭 사고가 없다
+	var entries: Array = []
+	for md in Game.MONSTER_DEFS:
+		entries.append([String(md["name"]), family_color(String(md.get("family", "slime"))).to_html(false)])
+	for bn in Game.BOSS_NAMES:
+		entries.append([String(bn), FAMILY_COLORS["undead"].to_html(false)])
+	entries.append(["황금 슬라임", COL_GOLD.to_html(false)])
+	entries.append(["은빛 슬라임", "c7ccd8"])
+	for cid in Game.COMPANIONS.keys():
+		var col: String = CLASS_COLORS.get(cid, "f4f0e0")
+		entries.append([String(Game.COMPANIONS[cid]["name"]), col])
+	entries.sort_custom(func(a, b): return String(a[0]).length() > String(b[0]).length())
+	_name_map = entries
+
+static func colorize(text: String) -> String:
+	# 규칙 기반 자동 채색 — 이미 태그가 든 문장은 연출 우선이라 손대지 않는다
+	if text.contains("[color") or text.contains("[slam"):
+		return text
+	_ensure_colorizer()
+	var out := text
+	# 파티 피격 숫자 = 빨강
+	out = _rx_taken.sub(out, "에게 [color=#ef476f]$1[/color]!", true)
+	# 골드 = 금
+	out = _rx_gold.sub(out, "[color=#f5c542]$1 G[/color]", true)
+	# 이름 채색 (몬스터=계열색, 동료=직업색)
+	for e in _name_map:
+		var nm: String = e[0]
+		if out.contains(nm):
+			out = out.replace(nm, "[color=#%s]%s[/color]" % [e[1], nm])
+			break  # 한 문장 = 주인공 하나 (남발 방지)
+	# 키워드 — 해금·성장은 금, 위험은 빨강, 회복은 초록
+	for kw in ["레벨", "훈장", "열쇠", "손에 넣었다", "해방", "합체기"]:
+		if out.contains(kw) and not out.contains("[color=#f5c542]" + kw):
+			out = out.replace(kw, "[color=#f5c542]%s[/color]" % kw)
+			break
+	for kw in ["쓰러졌다", "전멸", "도망쳐", "위험"]:
+		if out.contains(kw):
+			out = out.replace(kw, "[color=#ef476f]%s[/color]" % kw)
+			break
+	for kw in ["아문다", "회복", "되살아났다"]:
+		if out.contains(kw):
+			out = out.replace(kw, "[color=#8ac926]%s[/color]" % kw)
+			break
+	return out
+
+static func make_rich(text: String, size: int = FS) -> RichTextLabel:
+	# 텍스트 연기(演技)용 — [shake]/[wave] 내장 + [slam]/[whisper] 커스텀 (v3.7 §E)
+	var r := RichTextLabel.new()
+	r.bbcode_enabled = true
+	r.fit_content = true
+	r.scroll_active = false
+	r.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	r.install_effect(SlamFX.new())
+	r.install_effect(WhisperFX.new())
+	if size != FS:
+		r.add_theme_font_size_override("normal_font_size", size)
+	r.text = text
+	return r
 
 static func panel_style(border: Color = COL_WHITE, bg: Color = COL_BG) -> StyleBoxFlat:
 	var s := StyleBoxFlat.new()
@@ -29,49 +119,28 @@ static func panel_style(border: Color = COL_WHITE, bg: Color = COL_BG) -> StyleB
 	s.set_content_margin_all(6)
 	return s
 
-static func make_panel(border: Color = COL_WHITE) -> PanelContainer:
-	# 드퀘식 이중 테두리 — 굵은 흰 외곽(2px) + 1px 간격 + 얇은 안쪽 선
-	var p := PanelContainer.new()
-	p.add_theme_stylebox_override("panel", panel_style(border))
-	var inner := border
-	inner.a = 0.85
-	p.draw.connect(func():
-		var r := Rect2(Vector2(4, 4), p.size - Vector2(8, 8))
-		if r.size.x > 8.0 and r.size.y > 8.0:
-			p.draw_rect(r, inner, false, 1.0))
+static func make_panel(border: Color = COL_WHITE) -> DQPanel:
+	# 동적 생성용 — 에디터에선 DQPanel 노드를 직접 배치하면 된다
+	var p := DQPanel.new()
+	p.border_color = border
 	return p
 
 static func make_label(text: String, size: int = FS, color: Color = COL_WHITE) -> Label:
 	var l := Label.new()
 	l.text = text
-	l.add_theme_font_override("font", FONT_PX)
-	l.add_theme_font_size_override("font_size", size)
-	l.add_theme_color_override("font_color", color)
+	if size != FS:
+		l.add_theme_font_size_override("font_size", size)
+	if color != COL_WHITE:
+		l.add_theme_color_override("font_color", color)
 	return l
 
 static func make_button(text: String, size: int = FS) -> Button:
+	# 스타일은 전역 테마(theme.tres)가 입힌다
 	var b := Button.new()
 	b.text = text
 	b.focus_mode = Control.FOCUS_NONE
-	b.add_theme_font_override("font", FONT_PX)
-	b.add_theme_font_size_override("font_size", size)
-	b.add_theme_color_override("font_color", COL_WHITE)
-	b.add_theme_color_override("font_hover_color", COL_GOLD)
-	b.add_theme_color_override("font_pressed_color", COL_GOLD)
-	b.add_theme_color_override("font_disabled_color", COL_GRAY)
-	var normal := StyleBoxFlat.new()
-	normal.bg_color = Color(0.08, 0.08, 0.14, 0.9)
-	normal.set_content_margin_all(4)
-	normal.set_corner_radius_all(2)
-	var hover: StyleBoxFlat = normal.duplicate()
-	hover.bg_color = Color(0.2, 0.18, 0.05, 0.95)
-	hover.border_color = COL_GOLD
-	hover.set_border_width_all(1)
-	b.add_theme_stylebox_override("normal", normal)
-	b.add_theme_stylebox_override("hover", hover)
-	b.add_theme_stylebox_override("pressed", hover)
-	b.add_theme_stylebox_override("disabled", normal)
-	b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	if size != FS:
+		b.add_theme_font_size_override("font_size", size)
 	return b
 
 # ---------------------------------------------------------------- 커서 4종

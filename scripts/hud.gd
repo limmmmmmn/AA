@@ -9,178 +9,120 @@ const SLOT_POS := [
 ]
 const GOLD_TARGET := Vector2(40, 16)
 
-const IDLE_LINES := [
-	"바람이 분다. 평화롭다. …일단은.",
-	"일행은 씩씩하게 걷고 있다.",
-	"마왕은 이미 이겼다. 그래서 뭐 어떤가.",
-	"어디선가 슬라임 우는 소리가 들린다.",
-	"돌아갈 곳이 있다는 건 좋은 일이다.",
-	"몬스터에게 부딪히면 전투창이 열린다.",
-	"전투창을 지켜보면 일행이 힘을 낸다.",
-	"마을에 서 있는 사람 수가 곧 진행바다.",
+# 앰비언트 팝 (v3.7 §E — 상시 설명창의 후계자. 뒷문장은 항상 비껴 뜬다)
+const AMBIENT_PAIRS := [
+	["바람이 분다. 평화롭다.", "…일단은."],
+	["어디선가 슬라임 우는 소리가 들린다.", "…조금 귀엽다."],
+	["마왕은 이미 이겼다.", "그래서 뭐 어떤가."],
+	["일행은 씩씩하게 걷고 있다.", "누군가는 졸면서."],
+	["돌아갈 곳이 있다는 건", "좋은 일이다."],
+	["마을에 서 있는 사람의 수가", "곧 진행바다."],
 ]
 
 var main: Node2D
 
-var windows_root: Control
-var _fx_root: Control
-var _menu_root: Control
-var _overlay_root: Control
+## v3.5 씬 리팩터 — 고정 UI는 scenes/hud.tscn 에디터 노드 (%유니크 네임 참조).
+## 위치·크기·색은 에디터에서 수정하면 된다. 코드는 내용만 채운다.
+@onready var windows_root: Control = %WindowsRoot
+@onready var _party_root: Control = %PartyRoot
+@onready var _fx_root: Control = %FxRoot
+@onready var _menu_root: Control = %MenuRoot
+@onready var _overlay_root: Control = %OverlayRoot
+@onready var _top_panel: PanelContainer = %TopPanel
+@onready var _top_label: Label = %TopLabel
+@onready var _xp_bar: ColorRect = %XPBar
+@onready var _party_bar: PanelContainer = %PartyBar
+@onready var _party_vbox: VBoxContainer = %PartyVBox
+@onready var _tooltip: PanelContainer = %Tooltip
+@onready var _tooltip_label: Label = %TooltipLabel
+@onready var _event_box: PanelContainer = %EventBox
+@onready var _event_label: RichTextLabel = %EventLabel
+@onready var _event_portrait: TextureRect = %EventPortrait
 
-var _top_label: Label
-var _desc_label: Label
+const MEMBER_BOX_SCENE := preload("res://scenes/member_box.tscn")
+
 var _member_boxes: Array = []
 var _casino_refs: Dictionary = {}
 var _spin_active := false
 var _board_tab := 0
 var room_name := "기지"           # main이 설정
-var _bubble: PanelContainer
-var _bubble_label: Label
-var _top_panel: PanelContainer
-var _desc_panel: PanelContainer
+
+# 성수 게이지 — 통합 파티 바 안의 셀 (v3.7 §D)
+var _holy_cell: Control = null
+var _holy_bar: ColorRect = null
+# 합체기 게이지 셀
+var _combo_cell: Control = null
+var _combo_fill: ColorRect = null
 
 var _hover_text := ""
-var _event_text := ""
-var _event_t := 0.0
-var _idle_t := 0.0
-var _idle_i := 0
 var _menu_kind := ""
-var menu_hover := ""   # 메뉴 항목 호버 시 설명창에 흘릴 텍스트
+var menu_hover := ""   # 메뉴 항목 호버 시 툴팁에 흘릴 텍스트
+
+# 이벤트 박스 큐 (§E — 선언은 동시에 하나)
+var _event_q: Array = []
+var _event_showing := false
+var _ambient_t := 45.0
 
 # v3.1
 var remote_open := false           # 상인의 텔레파시로 연 메뉴 — 몸 행위 행은 잠긴다
-var _xp_bar: ColorRect
-var _holy_panel: PanelContainer
-var _holy_bar: ColorRect
-var _holy_label: Label
 var _hover_heal_idx := -1          # 치유의 눈길 — 호버 중인 멤버 박스
 
 func _ready() -> void:
-	layer = 10
-	_build()
 	Game.gold_changed.connect(func(_v): _update_top())
 	Game.level_changed.connect(func(_v): _update_top())
 	Game.chapter_changed.connect(func(_v): _update_top())
 	Game.party_changed.connect(_rebuild_members)
 	Game.member_changed.connect(_update_member)
 	Game.upgrades_changed.connect(func(): _update_top())
+	# 텍스트 연기 이펙트 설치 (v3.7 §E)
+	_event_label.install_effect(SlamFX.new())
+	_event_label.install_effect(WhisperFX.new())
 	_update_top()
 	_rebuild_members()
 	# 세이브에서 이미 태어난 UI는 연출 없이 바로 보여준다 (탄생은 최초 1회뿐)
-	if Game.ui_unlocked["desc"]:
-		_desc_panel.visible = true
 	if Game.ui_unlocked["gold"]:
 		_top_panel.visible = true
-
-func _build() -> void:
-	windows_root = Control.new()
-	windows_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	windows_root.set_anchors_preset(Control.PRESET_FULL_RECT)
-	add_child(windows_root)
-
-	# 상단 정보창 — 첫 골드를 벌면 태어난다 (8px 그리드)
-	_top_panel = UILib.make_panel()
-	_top_panel.position = Vector2(8, 8)
-	_top_panel.visible = false
-	add_child(_top_panel)
-	var top_v := VBoxContainer.new()
-	top_v.add_theme_constant_override("separation", 1)
-	_top_panel.add_child(top_v)
-	_top_label = UILib.make_label("", UILib.FS, UILib.COL_GOLD)
-	top_v.add_child(_top_label)
-	# XP 미니바 (v3.1 §B-1 — 정보창 안, 다음 레벨까지의 거리)
-	var xp_bg := ColorRect.new()
-	xp_bg.color = Color(0.15, 0.18, 0.3)
-	xp_bg.custom_minimum_size = Vector2(0, 2)
-	top_v.add_child(xp_bg)
-	_xp_bar = ColorRect.new()
-	_xp_bar.color = Color(0.4, 0.65, 1.0)
-	_xp_bar.size = Vector2(0, 2)
-	xp_bg.add_child(_xp_bar)
-
-	# 말풍선 (호버한 캐릭터 머리 위)
-	_bubble = UILib.make_panel()
-	_bubble.visible = false
-	_bubble.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(_bubble)
-	_bubble_label = UILib.make_label("", UILib.FS)
-	_bubble_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_bubble_label.custom_minimum_size = Vector2(0, 0)
-	_bubble_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_bubble.add_child(_bubble_label)
-
-	# 상시 설명창 — 촌장에게 말을 걸면 태어난다 (베이스라인 y=352, 높이 40)
-	_desc_panel = UILib.make_panel()
-	_desc_panel.position = Vector2(8, 312)
-	_desc_panel.custom_minimum_size = Vector2(184, 40)  # v3.1: 성수 게이지 자리를 내준다
-	_desc_panel.visible = false
-	add_child(_desc_panel)
-	_desc_label = UILib.make_label("", UILib.FS)
-	_desc_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_desc_label.custom_minimum_size = Vector2(168, 26)
-	_desc_panel.add_child(_desc_label)
-
-	# 성수 게이지 (v3.1 §B-7-4) — 교회가 서면 태어난다
-	_holy_panel = UILib.make_panel()
-	_holy_panel.position = Vector2(196, 312)
-	_holy_panel.custom_minimum_size = Vector2(44, 40)
-	_holy_panel.visible = false
-	add_child(_holy_panel)
-	var hv := VBoxContainer.new()
-	hv.add_theme_constant_override("separation", 2)
-	_holy_panel.add_child(hv)
-	_holy_label = UILib.make_label("성수", UILib.FS, UILib.COL_GOLD)
-	hv.add_child(_holy_label)
-	var hbg := ColorRect.new()
-	hbg.color = Color(0.12, 0.15, 0.25)
-	hbg.custom_minimum_size = Vector2(32, 4)
-	hv.add_child(hbg)
-	_holy_bar = ColorRect.new()
-	_holy_bar.color = Color(0.55, 0.8, 1.0)
-	_holy_bar.size = Vector2(32, 4)
-	hbg.add_child(_holy_bar)
-
-	_fx_root = Control.new()
-	_fx_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_fx_root.set_anchors_preset(Control.PRESET_FULL_RECT)
-	add_child(_fx_root)
-
-	_menu_root = Control.new()
-	_menu_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_menu_root.set_anchors_preset(Control.PRESET_FULL_RECT)
-	add_child(_menu_root)
-
-	_overlay_root = Control.new()
-	_overlay_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_overlay_root.set_anchors_preset(Control.PRESET_FULL_RECT)
-	add_child(_overlay_root)
+	if Game.ui_unlocked["party"]:
+		_party_bar.visible = true
 
 func _process(delta: float) -> void:
-	if _event_t > 0.0:
-		_event_t -= delta
-		_desc_label.text = _event_text
-	elif _hover_text != "":
-		_desc_label.text = _hover_text
+	# 툴팁 (속삭임) — 커서 추종 (v3.7 §E)
+	var tip := _hover_text if _hover_text != "" else menu_hover
+	if tip != "" and not _title_suppress:
+		_tooltip_label.text = tip
+		_tooltip.visible = true
+		_tooltip.reset_size()
+		var mp := get_viewport().get_mouse_position() + Vector2(12, 14)
+		mp.x = clampf(mp.x, 2.0, 638.0 - _tooltip.size.x)
+		mp.y = clampf(mp.y, 2.0, 358.0 - _tooltip.size.y)
+		_tooltip.position = mp
 	else:
-		_idle_t -= delta
-		if _idle_t <= 0.0:
-			_idle_t = 9.0
-			_idle_i = (_idle_i + 1) % IDLE_LINES.size()
-		_desc_label.text = IDLE_LINES[_idle_i]
-	# 메뉴 스크롤 높이 — 내용에 맞추되 화면을 넘지 않게 (베이스라인 304px)
+		_tooltip.visible = false
+	# 앰비언트 팝 — 희소해야 시가 된다 (수 분당 1회)
+	if not _title_suppress and not is_menu_open():
+		_ambient_t -= delta
+		if _ambient_t <= 0.0:
+			_ambient_t = randf_range(100.0, 190.0)
+			_spawn_ambient()
+	# 이벤트 박스 큐 소화
+	if not _event_showing and not _event_q.is_empty():
+		_show_next_event()
+	# 파티 컬럼 — 우측 세로 고정 (v3.8 §B-2, FF 오마주. 자라면 아래로)
+	if _party_bar.visible:
+		_party_bar.position = Vector2(636.0 - _party_bar.size.x, 64.0)
+	# 메뉴 스크롤 높이 — 내용에 맞추되 화면을 넘지 않게
 	if _menu_sc != null and is_instance_valid(_menu_sc) and _menu_v != null and is_instance_valid(_menu_v):
-		var want: float = minf(_menu_v.get_combined_minimum_size().y, 318.0)
+		var want: float = minf(_menu_v.get_combined_minimum_size().y, 252.0)
 		if absf(_menu_sc.custom_minimum_size.y - want) > 0.5:
 			_menu_sc.custom_minimum_size = Vector2(312, want)
 	# XP 미니바 — 다음 레벨까지의 거리
 	if _top_panel.visible and is_instance_valid(_xp_bar):
 		var w: float = maxf(0.0, _top_panel.size.x - 16.0)
 		_xp_bar.size = Vector2(w * clampf(float(Game.exp) / maxf(1.0, float(Game.exp_to_next())), 0.0, 1.0), 2)
-	# 성수 — 자동 재생 / 치유의 눈길 호버 시 소모하며 회복 (v3.1 §B-7-4)
+	# 성수 — 자동 재생 / 치유의 눈길 호버 시 소모하며 회복 (셀은 파티 바 안, v3.7 §D)
 	if Game.buildings["church"]:
-		if not _holy_panel.visible and Game.ui_unlocked["desc"] and not _title_suppress:
-			_holy_panel.visible = true
-			_birth_pop(_holy_panel)
+		if _holy_cell != null and is_instance_valid(_holy_cell) and not _holy_cell.visible:
+			_holy_cell.visible = true
 		var healing := false
 		if _hover_heal_idx >= 0 and _hover_heal_idx < Game.members.size() and Game.holy > 0.0:
 			var m: Dictionary = Game.members[_hover_heal_idx]
@@ -194,8 +136,8 @@ func _process(delta: float) -> void:
 					Game.heal_member(_hover_heal_idx, amt)
 		if not healing:
 			Game.holy = minf(Game.holy_max(), Game.holy + Game.holy_regen_rate() * delta)
-		if is_instance_valid(_holy_bar):
-			_holy_bar.size = Vector2(32.0 * clampf(Game.holy / maxf(1.0, Game.holy_max()), 0.0, 1.0), 4)
+		if _holy_bar != null and is_instance_valid(_holy_bar):
+			_holy_bar.size = Vector2(70.0 * clampf(Game.holy / maxf(1.0, Game.holy_max()), 0.0, 1.0), 3)
 			_holy_bar.color = Color(0.9, 0.95, 1.0) if healing else Color(0.55, 0.8, 1.0)
 	# 합체기 게이지 — 조합 성립 시 상시 표시 (v3.4)
 	_update_combo_bar()
@@ -212,21 +154,31 @@ func unlock_ui(id: String) -> void:
 	var target: Control = null
 	match id:
 		"desc":
-			target = _desc_panel
+			pass  # v3.7: 상시 설명창 폐지 — 대사는 이벤트 박스/앰비언트가 맡는다 (플래그만 유지)
 		"gold":
 			target = _top_panel
 			_update_top()
 		"party":
+			_party_bar.visible = true
 			_rebuild_members()
-			for b in _member_boxes:
-				if is_instance_valid(b["panel"]):
-					_birth_pop(b["panel"])
+			target = _party_bar
 		"quest":
 			pass  # 촌장의 부탁이 열린다 — UI가 아니라 세계(촌장)가 창구
 	if target != null:
 		target.visible = true
 		_birth_pop(target)
 	Game.save_game()
+
+func _chip(text: String, color: Color = UILib.COL_WHITE, bg_a: float = 0.82) -> PanelContainer:
+	# 소형 텍스트 칩 (v3.8 §B-5) — 화면에 맨몸 텍스트 금지, 전부 패널 위에
+	var c := DQPanel.new()
+	c.inner_line = false
+	c.bg_color = Color(0.102, 0.11, 0.173, bg_a)
+	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var l := UILib.make_label(text, UILib.FS, color)
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	c.add_child(l)
+	return c
 
 func _birth_pop(c: Control) -> void:
 	# UI의 탄생 — 뿅
@@ -238,18 +190,15 @@ func _birth_pop(c: Control) -> void:
 var _toasts: Array = []
 
 func toast(text: String, dur: float = 3.0) -> void:
-	# 설명창이 태어나기 전의 대사는 화면 중앙에 — 여러 개면 아래로 쌓인다
-	var l := UILib.make_label(text, UILib.FS, UILib.COL_WHITE)
-	l.add_theme_color_override("font_outline_color", Color(0, 0, 0))
-	l.add_theme_constant_override("outline_size", 3)
-	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# 프롤로그 등 중앙 대사 — 칩에 담아 쌓는다 (v3.8: 맨몸 텍스트 금지)
+	var l := _chip(text)
 	_fx_root.add_child(l)
 	_toasts.append(l)
 	await get_tree().process_frame
 	if not is_instance_valid(l):
 		return
 	var idx: int = maxi(0, _toasts.find(l))
-	l.position = Vector2(320 - l.size.x / 2.0, 140 + idx * 14)
+	l.position = Vector2(320 - l.size.x / 2.0, 136 + idx * 22)
 	var tw := create_tween()
 	tw.tween_interval(dur)
 	tw.tween_property(l, "modulate:a", 0.0, 0.6)
@@ -257,20 +206,13 @@ func toast(text: String, dur: float = 3.0) -> void:
 		_toasts.erase(l)
 		l.queue_free())
 
-# ---------------------------------------------------------------- 말풍선
+# ---------------------------------------------------------------- 말풍선 → 툴팁 (v3.7: 커서 추종으로 통합)
 
-func show_bubble(text: String, screen_pos: Vector2) -> void:
-	_bubble_label.text = text
-	_bubble_label.custom_minimum_size = Vector2(minf(150.0, text.length() * UILib.FS + 8.0), 0)
-	_bubble.visible = true
-	_bubble.reset_size()
-	var p := screen_pos - Vector2(_bubble.size.x / 2.0, _bubble.size.y)
-	p.x = clampf(p.x, 2.0, 640.0 - _bubble.size.x - 2.0)
-	p.y = clampf(p.y, 2.0, 360.0 - _bubble.size.y - 2.0)
-	_bubble.position = p
+func show_bubble(_text: String, _screen_pos: Vector2) -> void:
+	pass  # 툴팁(_hover_text)이 대신한다 — 호환용 빈 함수
 
 func hide_bubble() -> void:
-	_bubble.visible = false
+	pass
 
 # ---------------------------------------------------------------- 상단/설명
 
@@ -290,60 +232,160 @@ func _update_top() -> void:
 func set_hover(text: String) -> void:
 	_hover_text = text
 
-func event(text: String, dur: float = 2.5) -> void:
-	if not Game.ui_unlocked["desc"]:
-		toast(text, dur)  # 설명창이 태어나기 전엔 중앙에
+# ---------------------------------------------------------------- 이벤트 박스 (v3.7 §E — "선언". 놓치는 게 불가능해야 한다)
+
+func event(text: String, dur: float = 2.5, portrait: String = "") -> void:
+	# 동시 1개 + 큐. 큐가 밀리면 오래된 것부터 버린다 (선언의 신선도)
+	_event_q.append({"text": text, "dur": maxf(dur, 1.6), "portrait": portrait})
+	while _event_q.size() > 5:
+		_event_q.pop_front()
+
+func _show_next_event() -> void:
+	if _event_q.is_empty() or _title_suppress:
 		return
-	_event_text = text
-	_event_t = dur
+	_event_showing = true
+	var e: Dictionary = _event_q.pop_front()
+	var text := UILib.colorize(String(e["text"]))  # v3.8: 자동 채색
+	# 수중 필드 — 모든 선언이 출렁인다 (§E [wave])
+	if Game.current_field == Game.HIDDEN_FIELD and not text.begins_with("["):
+		text = "[wave amp=6 freq=4]%s[/wave]" % text
+	_event_label.text = text
+	# 초상화 슬롯 (촌장·엄마 얼굴 도트 — 임시: 스프라이트 프레임 컷)
+	var tex := _portrait_tex(String(e["portrait"]))
+	_event_portrait.texture = tex
+	_event_portrait.visible = tex != null
+	_event_box.visible = true
+	_event_box.reset_size()
+	# 최하단 8px 고정 — 부유 금지 (v3.8 §B-2)
+	_event_box.position = Vector2(320.0 - _event_box.size.x / 2.0, 352.0 - _event_box.size.y)
+	_event_box.pivot_offset = Vector2(_event_box.size.x / 2.0, _event_box.size.y)
+	_event_box.scale = Vector2(1.0, 0.3)
+	Sfx.play("window", 0.8)  # 등장 사운드 필수 — 놓치는 게 불가능해야 한다
+	var dur: float = e["dur"] * (0.55 if not _event_q.is_empty() else 1.0)  # 밀리면 빠르게
+	var tw := create_tween()
+	tw.tween_property(_event_box, "scale", Vector2.ONE, 0.12).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.tween_interval(dur)
+	tw.tween_property(_event_box, "modulate:a", 0.0, 0.25)
+	tw.tween_callback(func():
+		_event_box.visible = false
+		_event_box.modulate.a = 1.0
+		_event_showing = false)
+
+func _portrait_tex(id: String) -> Texture2D:
+	if id == "":
+		return null
+	var path := "res://assets/NPCs/village_chief.png"
+	var tex: Texture2D = load(path)
+	var atlas := AtlasTexture.new()
+	atlas.atlas = tex
+	atlas.region = Rect2(tex.get_width() / 3.0, 0, tex.get_width() / 3.0, tex.get_height() / 4.0)
+	return atlas
+
+# ---------------------------------------------------------------- 앰비언트 팝 (v3.7 §E — 박스에서 연기로)
+
+func _spawn_ambient() -> void:
+	var pair: Array = AMBIENT_PAIRS[randi() % AMBIENT_PAIRS.size()]
+	var base := Vector2(randf_range(260.0, 460.0), randf_range(60.0, 260.0))
+	var l1 := _chip(String(pair[0]), UILib.COL_WHITE, 0.75)  # 박스째로 뜬다 (§B-5)
+	l1.position = base
+	l1.modulate.a = 0.0
+	_fx_root.add_child(l1)
+	var tw1 := create_tween()
+	tw1.tween_property(l1, "modulate:a", 0.9, 0.5)
+	tw1.tween_interval(4.2)
+	tw1.tween_property(l1, "modulate:a", 0.0, 1.2)
+	tw1.tween_callback(l1.queue_free)
+	# 뒷문장 — 시차를 두고, 항상 비껴 뜬다 (어긋남이 곧 뉘앙스의 연기)
+	get_tree().create_timer(randf_range(0.6, 1.0)).timeout.connect(func():
+		var l2 := _chip(String(pair[1]), UILib.COL_GRAY, 0.75)
+		l2.position = base + Vector2(randf_range(18.0, 46.0), randf_range(16.0, 26.0))
+		l2.rotation_degrees = randf_range(-3.0, 3.0)  # 연기 레이어 — 기울임 합법 (§F)
+		l2.modulate.a = 0.0
+		_fx_root.add_child(l2)
+		var tw2 := create_tween()
+		tw2.tween_property(l2, "modulate:a", 0.85, 0.5)
+		tw2.tween_interval(3.6)
+		tw2.tween_property(l2, "modulate:a", 0.0, 1.2)
+		tw2.tween_callback(l2.queue_free))
 
 # ---------------------------------------------------------------- 파티 스테이터스
 
 func _rebuild_members() -> void:
-	for b in _member_boxes:
-		if is_instance_valid(b["panel"]):
-			b["panel"].queue_free()
+	# v3.8 §B-2: 파티 컬럼 — 우측 세로 스택 (FF 오마주). 위=합체기, 아래=성수
+	for c in _party_vbox.get_children():
+		c.queue_free()
 	_member_boxes = []
+	_holy_cell = null
+	_holy_bar = null
+	_combo_cell = null
+	_combo_fill = null
 	if not Game.ui_unlocked["party"]:
+		_party_bar.visible = false
 		return
+	_party_bar.visible = not _title_suppress
+	# ① 합체기 게이지 (컬럼 최상단, 가로 바 — 조합 성립 시만)
+	_combo_cell = Control.new()
+	_combo_cell.custom_minimum_size = Vector2(74, 7)
+	_combo_cell.visible = false
+	_party_vbox.add_child(_combo_cell)
+	var cbg := ColorRect.new()
+	cbg.color = Color(0.15, 0.13, 0.22)
+	cbg.position = Vector2(0, 1)
+	cbg.size = Vector2(74, 5)
+	_combo_cell.add_child(cbg)
+	_combo_fill = ColorRect.new()
+	_combo_fill.color = UILib.COL_GOLD
+	cbg.add_child(_combo_fill)
+	_sep()
+	# ② 파티 카드 — 얇게 (이름 + HP바. 숫자는 호버 툴팁)
 	var n := Game.members.size()
 	for i in n:
-		var p := UILib.make_panel()
-		# 오른쪽에서부터 채우고, 새 동료가 오면 한 칸씩 자란다 (베이스라인 y=352)
-		p.position = Vector2(632 - 74 - (n - 1 - i) * 82, 312)
-		p.custom_minimum_size = Vector2(74, 40)
-		add_child(p)
-		# 치유의 눈길 — 멤버 박스를 지그시 바라보면 성수가 상처를 씻는다 (v3.1)
+		var cell: Control = MEMBER_BOX_SCENE.instantiate()
+		cell.mouse_filter = Control.MOUSE_FILTER_STOP
+		_party_vbox.add_child(cell)
 		var mi := i
-		p.mouse_entered.connect(func():
+		cell.mouse_entered.connect(func():
 			if Game.up["heal_eye"] > 0:
 				_hover_heal_idx = mi)
-		p.mouse_exited.connect(func():
+		cell.mouse_exited.connect(func():
 			if _hover_heal_idx == mi:
 				_hover_heal_idx = -1)
-		# 파티창 클릭 = 스테이터스 창 (v3.4 §B-12 — 넘버를 보여줘야 한다)
-		p.gui_input.connect(func(ev: InputEvent):
+		# 카드 클릭 = 스테이터스 창 (v3.4 §B-12)
+		cell.gui_input.connect(func(ev: InputEvent):
 			if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
 				open_status(mi))
-		var v := VBoxContainer.new()
-		v.add_theme_constant_override("separation", 1)
-		p.add_child(v)
-		var name_l := UILib.make_label("", UILib.FS)
-		v.add_child(name_l)
-		var hp_l := UILib.make_label("", UILib.FS)
-		v.add_child(hp_l)
-		var bar_bg := ColorRect.new()
-		bar_bg.color = Color(0.2, 0.2, 0.25)
-		bar_bg.custom_minimum_size = Vector2(60, 2)
-		v.add_child(bar_bg)
-		var bar := ColorRect.new()
-		bar.color = UILib.COL_GREEN
-		bar.size = Vector2(60, 2)
-		bar_bg.add_child(bar)
-		_member_boxes.append({"panel": p, "name": name_l, "hp": hp_l, "bar": bar})
+		_member_boxes.append({
+			"panel": cell,
+			"name": cell.get_node("%NameLabel"),
+			"bar": cell.get_node("%Bar"),
+		})
 		_update_member(i)
-		if _title_suppress:
-			p.visible = false  # 타이틀 상태 — HUD는 잠든다
+		if i < n - 1:
+			_sep()
+	# ③ 성수 게이지 (컬럼 최하단, 교회가 서면)
+	_sep()
+	_holy_cell = VBoxContainer.new()
+	_holy_cell.add_theme_constant_override("separation", 2)
+	_holy_cell.custom_minimum_size = Vector2(74, 18)
+	_holy_cell.visible = Game.buildings["church"]
+	_party_vbox.add_child(_holy_cell)
+	var hl := UILib.make_label("성수", UILib.FS, UILib.COL_GOLD)
+	_holy_cell.add_child(hl)
+	var hbg := ColorRect.new()
+	hbg.color = Color(0.1, 0.13, 0.22)
+	hbg.custom_minimum_size = Vector2(70, 3)
+	_holy_cell.add_child(hbg)
+	_holy_bar = ColorRect.new()
+	_holy_bar.color = Color(0.55, 0.8, 1.0)
+	_holy_bar.size = Vector2(70, 3)
+	hbg.add_child(_holy_bar)
+
+func _sep() -> void:
+	# 칸막이 — 1px 크림 라인 (가로, 테두리 소음 최소화)
+	var s := ColorRect.new()
+	s.color = Color(0.957, 0.941, 0.878, 0.3)
+	s.custom_minimum_size = Vector2(72, 1)
+	_party_vbox.add_child(s)
 
 func _update_member(i: int) -> void:
 	if i >= _member_boxes.size():
@@ -355,24 +397,24 @@ func _update_member(i: int) -> void:
 	var ghost: bool = m["ghost"]
 	b["name"].text = ("†" if ghost else "") + String(m["name"])
 	b["name"].add_theme_color_override("font_color", UILib.COL_GRAY if ghost else UILib.COL_WHITE)
-	b["hp"].text = "HP %d" % m["hp"]
-	b["hp"].add_theme_color_override("font_color", UILib.COL_GRAY if ghost else UILib.COL_WHITE)
 	var ratio: float = float(m["hp"]) / maxf(1.0, float(m["max_hp"]))
-	b["bar"].size = Vector2(60.0 * ratio, 2)
+	b["bar"].size = Vector2(56.0 * ratio, 3)
 	b["bar"].color = UILib.COL_GRAY if ghost else (UILib.COL_GREEN if ratio > 0.35 else UILib.COL_RED)
-	b["panel"].add_theme_stylebox_override("panel", UILib.panel_style(UILib.COL_GRAY if ghost else UILib.COL_WHITE))
+	# 유령 칸 = 반투명 + 청색 (§D). 숫자는 툴팁으로 (넘버는 원할 때만)
+	b["panel"].modulate = Color(0.7, 0.8, 1.25, 0.55) if ghost else Color(1, 1, 1, 1)
+	b["panel"].tooltip_text = "HP %d / %d" % [m["hp"], m["max_hp"]]
 
 func member_box_center(i: int) -> Vector2:
 	if i < _member_boxes.size() and is_instance_valid(_member_boxes[i]["panel"]):
-		return _member_boxes[i]["panel"].position + Vector2(37, 20)
-	return Vector2(500, 332)
+		var p: Control = _member_boxes[i]["panel"]
+		return p.global_position + p.size / 2.0
+	return Vector2(520, 336)
 
 # ---------------------------------------------------------------- 연출 (fx)
 
 func fly_damage(from: Vector2, member_idx: int, dmg: int) -> void:
-	var l := UILib.make_label(str(dmg), UILib.FS, UILib.COL_RED)
+	var l := _chip(str(dmg), UILib.COL_RED)  # 파티 피격 = 빨강 (v3.8 §B-1)
 	l.position = from
-	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_fx_root.add_child(l)
 	var to := member_box_center(member_idx) + Vector2(-8, -10)
 	var tw := create_tween()
@@ -380,8 +422,8 @@ func fly_damage(from: Vector2, member_idx: int, dmg: int) -> void:
 	tw.tween_callback(func():
 		l.queue_free()
 		if member_idx < _member_boxes.size() and is_instance_valid(_member_boxes[member_idx]["panel"]):
-			var p: PanelContainer = _member_boxes[member_idx]["panel"]
-			p.add_theme_stylebox_override("panel", UILib.panel_style(UILib.COL_RED))
+			var p: Control = _member_boxes[member_idx]["panel"]
+			p.modulate = Color(1.6, 0.5, 0.55)  # 피격 플래시 (칸 전체가 붉게)
 			var tw2 := create_tween()
 			tw2.tween_interval(0.15)
 			tw2.tween_callback(func(): _update_member(member_idx))
@@ -407,9 +449,8 @@ func coin_burst(from: Vector2, count: int) -> void:
 			Sfx.play("coin", 0.9 + i * 0.06))
 
 func popup(text: String, screen_pos: Vector2, color: Color = UILib.COL_GOLD) -> void:
-	var l := UILib.make_label(text, UILib.FS, color)
-	l.position = screen_pos + Vector2(-14, -18)
-	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var l := _chip(text, color)  # v3.8: 칩에 담는다
+	l.position = screen_pos + Vector2(-14, -22)
 	l.z_index = 20
 	_fx_root.add_child(l)
 	var tw := create_tween()
@@ -419,7 +460,7 @@ func popup(text: String, screen_pos: Vector2, color: Color = UILib.COL_GOLD) -> 
 
 # ---------------------------------------------------------------- 스택 뱃지 (v3.4 §B-1)
 
-var _stack_badge: Label = null
+var _stack_badge: PanelContainer = null
 
 func update_stack_badge(n: int, pos: Vector2) -> void:
 	if n <= 0:
@@ -428,13 +469,10 @@ func update_stack_badge(n: int, pos: Vector2) -> void:
 		_stack_badge = null
 		return
 	if _stack_badge == null or not is_instance_valid(_stack_badge):
-		_stack_badge = UILib.make_label("", UILib.FS, UILib.COL_GOLD)
-		_stack_badge.add_theme_color_override("font_outline_color", Color(0, 0, 0))
-		_stack_badge.add_theme_constant_override("outline_size", 3)
-		_stack_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_stack_badge = _chip("", UILib.COL_GOLD)
 		_stack_badge.z_index = 30
 		_fx_root.add_child(_stack_badge)
-	_stack_badge.text = "×%d" % n
+	_stack_badge.get_child(_stack_badge.get_child_count() - 1).text = "×%d" % n
 	_stack_badge.position = pos
 
 # ---------------------------------------------------------------- 루팅 토스트 (v3.4 §B-10 — 우상단 미니 창)
@@ -588,6 +626,8 @@ func show_cutin(text: String, tex_path: String, fallback: String, tint: Color) -
 	band.size = Vector2(640, 84)
 	band.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_overlay_root.add_child(band)
+	# 연기 레이어 — 컷인은 비스듬히 가로지르는 게 합법 (v3.7 §F)
+	band.rotation_degrees = randf_range(-2.5, -1.5)
 	var tex: Texture2D = load(tex_path) if ResourceLoader.exists(tex_path) else load(fallback)
 	var tr := TextureRect.new()
 	tr.texture = tex
@@ -597,8 +637,11 @@ func show_cutin(text: String, tex_path: String, fallback: String, tint: Color) -
 	tr.size = Vector2(64, 64)
 	tr.position = Vector2(-80, 10)
 	band.add_child(tr)
-	var l := UILib.make_label(text, UILib.FS, UILib.COL_GOLD)
-	l.position = Vector2(700, 28)
+	# [slam]/[shake] 태그 지원 — "…참치다."가 쿵 하고 박힌다 (v3.7 §E)
+	var l := UILib.make_rich(text)
+	l.add_theme_color_override("default_color", UILib.COL_GOLD)
+	l.custom_minimum_size = Vector2(300, 0)
+	l.position = Vector2(700, 22)
 	band.add_child(l)
 	Sfx.play("fanfare_big")
 	var tw := create_tween()
@@ -846,7 +889,7 @@ func open_inn() -> void:
 	_up_row(v, "max_hp", "침구 개선", "전원 최대 HP +8%", 30, 1.2, 9, 0)
 	# 작전 명령 (v3.2 §B-3 — 드퀘4 오마주. 훈장=반영구, 작전=수시 스위치)
 	if Game.tactic_known:
-		v.add_child(UILib.make_label("— 작전 명령 —", UILib.FS, UILib.COL_GOLD))
+		v.add_child(UILib.make_label("— 작전 명령 (개별 지시는 파티창 클릭) —", UILib.FS, UILib.COL_GOLD))
 		_tactic_row(v, "", "따로 없음", "평소대로 싸운다")
 		_tactic_row(v, "attack", "가차없이 공격", "턴 속도·데미지 상승, 대신 아프게 맞는다")
 		_tactic_row(v, "life", "목숨을 소중히", "사제가 먼저 움직이고 덜 맞는다, 수입은 준다")
@@ -1068,9 +1111,6 @@ func open_weaponshop() -> void:
 	var v := _menu_panel("무기점 — \"골드가 곧 힘입니다\"")
 	for i in Game.members.size():
 		var m: Dictionary = Game.members[i]
-		if m["cls"] == "hero":
-			_menu_row(v, Game.weapon_name(i), "전설의 검은 돈으로 살 수 없다 — 이야기와 바위가 벼린다", "—", false, func(): pass)
-			continue
 		var cost := Game.weapon_cost(i)
 		# 강화 변화량 필수 표시 (v3.4): 공격력 37 → 41
 		var now := Game.member_atk(i)
@@ -1102,9 +1142,6 @@ func open_smith() -> void:
 	v.add_child(UILib.make_label("벼림 보정 = % 배율. 무기(플랫)가 클수록 가치가 커진다", UILib.FS, UILib.COL_GRAY))
 	for i in Game.members.size():
 		var m: Dictionary = Game.members[i]
-		if m["cls"] == "hero":
-			_menu_row(v, Game.weapon_name(i), "전설의 검은 인간의 화덕을 거부한다", "—", false, func(): pass)
-			continue
 		var cost := Game.forge_cost(i)
 		var pts: int = int(Game.companion_forge.get(m["cls"], 0))
 		var now := Game.member_atk(i)
@@ -1233,8 +1270,18 @@ func open_status(i: int) -> void:
 	v.add_child(UILib.make_label("무기: %s" % Game.weapon_name(i), UILib.FS))
 	var pdesc: String = Game.COMPANIONS[m["cls"]]["pdesc"]
 	v.add_child(UILib.make_label("패시브: %s" % pdesc.split(" — ")[0], UILib.FS, UILib.COL_GRAY))
-	var t_name: String = Game.TACTIC_NAMES.get(Game.tactic, "따로 없음")
-	v.add_child(UILib.make_label("작전: %s" % t_name, UILib.FS))
+	# v3.6: 개별 작전 — 이 동료에게만 내리는 지시 (전체 작전보다 우선)
+	if Game.tactic_known:
+		var g_name: String = Game.TACTIC_NAMES.get(Game.tactic, "따로 없음")
+		v.add_child(UILib.make_label("— 개별 작전 (전체: %s) —" % g_name, UILib.FS, UILib.COL_GOLD))
+		var cls := String(m["cls"])
+		_member_tactic_row(v, i, cls, "", "전체 작전을 따른다")
+		_member_tactic_row(v, i, cls, "attack", "가차없이 공격 — 세게 치고 아프게 맞는다")
+		_member_tactic_row(v, i, cls, "life", "목숨을 소중히 — 이 동료만 덜 맞는다 (사제는 선행동)")
+		_member_tactic_row(v, i, cls, "gold", "골드를 노려라 — 창의 골드 작전에 힘을 싣는다")
+	else:
+		var t_name: String = Game.TACTIC_NAMES.get(Game.tactic, "따로 없음")
+		v.add_child(UILib.make_label("작전: %s" % t_name, UILib.FS))
 	if Game.medals_equipped.is_empty():
 		v.add_child(UILib.make_label("장착 훈장: 없음", UILib.FS, UILib.COL_GRAY))
 	else:
@@ -1242,45 +1289,96 @@ func open_status(i: int) -> void:
 		for mid in Game.medals_equipped:
 			v.add_child(UILib.make_label("★ " + String(Game.MEDAL_DEFS[mid]["name"]), UILib.FS))
 
+func _member_tactic_row(v: VBoxContainer, idx: int, cls: String, id: String, sub: String) -> void:
+	var on: bool = String(Game.member_tactics.get(cls, "")) == id
+	var label: String = Game.TACTIC_NAMES.get(id, "전체 따름")
+	_menu_row(v, ("▶ " if on else "・ ") + label, sub, "지시 중" if on else "지시", not on,
+		func():
+			if id == "":
+				Game.member_tactics.erase(cls)
+			else:
+				Game.member_tactics[cls] = id
+			Sfx.play("click")
+			Game.save_game()
+			open_status(idx))
+
 # ---------------------------------------------------------------- 합체기 게이지 (v3.4 §B-14 — 상시 가시성)
 
-var _combo_bar_bg: PanelContainer = null
-var _combo_bar: ColorRect = null
 var _combo_full_told := false
+var _combo_btn: Button = null      # v3.6: 만충 시 등장하는 필살 버튼
+var _combo_spark_t := 0.0
 
 func _update_combo_bar() -> void:
+	# v3.7 §D: 게이지는 통합 파티 바의 첫 셀
 	var active: bool = Game.ui_unlocked["party"] and not Game.active_combo().is_empty() and not _title_suppress
-	if active and _combo_bar_bg == null:
-		_combo_bar_bg = UILib.make_panel()
-		_combo_bar_bg.position = Vector2(632 - 74 - (Game.members.size() - 1) * 82 - 14, 312)
-		_combo_bar_bg.custom_minimum_size = Vector2(10, 40)
-		add_child(_combo_bar_bg)
-		var bg := ColorRect.new()
-		bg.color = Color(0.15, 0.12, 0.2)
-		bg.custom_minimum_size = Vector2(4, 32)
-		_combo_bar_bg.add_child(bg)
-		_combo_bar = ColorRect.new()
-		_combo_bar.color = UILib.COL_GOLD
-		bg.add_child(_combo_bar)
-	elif not active and _combo_bar_bg != null:
-		if is_instance_valid(_combo_bar_bg):
-			_combo_bar_bg.queue_free()
-		_combo_bar_bg = null
-		_combo_bar = null
-		_combo_full_told = false
-	if _combo_bar != null and is_instance_valid(_combo_bar):
+	if _combo_cell != null and is_instance_valid(_combo_cell):
+		_combo_cell.visible = active
+	if active and _combo_fill != null and is_instance_valid(_combo_fill):
 		var g: float = clampf(Game.combo_gauge, 0.0, 1.0)
-		_combo_bar.size = Vector2(4, 32.0 * g)
-		_combo_bar.position = Vector2(0, 32.0 - _combo_bar.size.y)
+		_combo_fill.size = Vector2(74.0 * g, 5)
+		_combo_fill.position = Vector2.ZERO
 		if g >= 1.0:
-			# 만충 = 점멸 + 토스트 (1회)
-			_combo_bar.color = UILib.COL_GOLD if sin(Time.get_ticks_msec() / 120.0) > 0.0 else UILib.COL_WHITE
+			_combo_fill.color = UILib.COL_GOLD if sin(Time.get_ticks_msec() / 120.0) > 0.0 else UILib.COL_WHITE
 			if not _combo_full_told:
 				_combo_full_told = true
-				loot_toast("합체기 준비 완료! (파티 클릭)", "medal")
+				loot_toast("합체기 준비 완료!", "medal")
 		else:
-			_combo_bar.color = UILib.COL_GOLD
+			_combo_fill.color = UILib.COL_GOLD
 			_combo_full_told = false
+	elif not active:
+		_combo_full_told = false
+	_update_combo_btn()
+
+func _update_combo_btn() -> void:
+	# v3.6: 만충이면 필살 버튼이 태어난다 — 화려하게 반짝이며
+	var combo: Dictionary = Game.active_combo()
+	var ready: bool = not combo.is_empty() and Game.combo_gauge >= 1.0 and not _title_suppress \
+		and Game.ui_unlocked["party"]
+	if ready and _combo_btn == null:
+		_combo_btn = UILib.make_button("", 12)
+		_combo_btn.add_theme_color_override("font_color", UILib.COL_GOLD)
+		_combo_btn.add_theme_color_override("font_outline_color", Color(0, 0, 0))
+		_combo_btn.add_theme_constant_override("outline_size", 3)
+		_combo_btn.z_index = 25
+		_combo_btn.pressed.connect(func():
+			if main != null:
+				main._fire_combo())
+		_party_root.add_child(_combo_btn)
+		_birth_pop(_combo_btn)
+		Sfx.play("golden", 0.7)
+	elif not ready and _combo_btn != null:
+		if is_instance_valid(_combo_btn):
+			_combo_btn.queue_free()
+		_combo_btn = null
+	if _combo_btn != null and is_instance_valid(_combo_btn):
+		var combo_name := String(combo.get("name", "합체기"))
+		_combo_btn.text = "★ %s ★" % combo_name
+		# 파티창 위에 떠서 두근두근 — 크기 맥동 + 무지개빛 금색
+		var t := Time.get_ticks_msec() / 1000.0
+		_combo_btn.reset_size()
+		_combo_btn.position = Vector2(_party_bar.position.x - _combo_btn.size.x - 6.0, _party_bar.position.y)
+		_combo_btn.pivot_offset = _combo_btn.size / 2.0
+		_combo_btn.scale = Vector2.ONE * (1.0 + 0.07 * sin(t * 6.0))
+		_combo_btn.modulate = Color(
+			1.0 + 0.5 * sin(t * 5.0),
+			0.9 + 0.4 * sin(t * 5.0 + 2.1),
+			0.5 + 0.5 * sin(t * 5.0 + 4.2))
+		# 금가루 스파클
+		_combo_spark_t -= get_process_delta_time()
+		if _combo_spark_t <= 0.0:
+			_combo_spark_t = 0.12
+			var d := ColorRect.new()
+			d.color = Color(1.0, 0.9, randf_range(0.2, 0.7))
+			d.size = Vector2(2, 2)
+			d.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			d.position = _combo_btn.position + Vector2(randf_range(-6, _combo_btn.size.x + 6), randf_range(-4, _combo_btn.size.y))
+			d.z_index = 26
+			_party_root.add_child(d)
+			var tw := create_tween()
+			tw.set_parallel(true)
+			tw.tween_property(d, "position:y", d.position.y - randf_range(8, 18), 0.5)
+			tw.tween_property(d, "modulate:a", 0.0, 0.5)
+			tw.chain().tween_callback(d.queue_free)
 
 # ---------------------------------------------------------------- 옵션 (v3.3 §D — 이 목록이 전부다)
 
@@ -1677,11 +1775,11 @@ func title_hide(on: bool) -> void:
 	# 타이틀 상태 — 마을만 보인다. HUD는 잠든다
 	_title_suppress = on
 	_top_panel.visible = Game.ui_unlocked["gold"] and not on
-	_desc_panel.visible = Game.ui_unlocked["desc"] and not on
-	_holy_panel.visible = Game.buildings["church"] and Game.ui_unlocked["desc"] and not on
-	for b in _member_boxes:
-		if is_instance_valid(b["panel"]):
-			b["panel"].visible = not on
+	_party_bar.visible = Game.ui_unlocked["party"] and not on
+	_tooltip.visible = false
+	_event_box.visible = false
+	_event_q.clear()
+	_event_showing = false
 
 var _title_suppress := false
 

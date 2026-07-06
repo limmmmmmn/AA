@@ -117,7 +117,7 @@ const PARTY_MAX := 5
 ## needs = 편성 조건 id, ghost = 유령 필요. 부분집합 조합이 있으므로 구체적인 것(참치)부터 판정
 const COMBO_DEFS := [
 	{"id": "tuna", "name": "참치 어택", "needs": ["hero", "priest", "mage", "thief"], "ghost": false,
-		"cutin": "전설의 조합이 완성되었다!\n…참치다.", "tex": "res://assets/combined/tuna.png", "fallback": "res://assets/enemies/slime_fly.png", "tint": Color(0.5, 0.7, 1.3)},
+		"cutin": "전설의 조합이 완성되었다!\n[slam]…참치다.[/slam]", "tex": "res://assets/combined/tuna.png", "fallback": "res://assets/enemies/slime_fly.png", "tint": Color(0.5, 0.7, 1.3)},
 	{"id": "frog", "name": "개구리의 왈츠", "needs": ["druid", "bardc"], "ghost": false,
 		"cutin": "드루이드와 바드의 선율이 겹쳐진다!\n개구리의 왈츠!", "tex": "res://assets/combined/frog.png", "fallback": "res://assets/enemies/slime.png", "tint": Color(0.5, 1.3, 0.5)},
 	{"id": "skeleton", "name": "명계의 행진", "needs": ["hero", "mage"], "ghost": false,
@@ -153,8 +153,14 @@ var playtime := 0.0
 # ---------------------------------------------------------------- v3.2
 var hero_name := ""                  # 이름 입력 (§B-4) — ""이면 새 게임에서 문자판이 뜬다
 var current_field := 0               # main이 갱신 — interactable 검시가 참조 (진주조개 등)
-var tactic := ""                     # 작전 명령 (§B-3): "" / attack / life / gold
+var tactic := ""                     # 전체 작전 명령 (§B-3): "" / attack / life / gold
 var tactic_known := false            # 2장 여관에서 해금
+var member_tactics := {}             # v3.6: 동료별 작전 오버라이드 (cls → tactic, ""=전체 따름)
+
+func member_tactic_of(cls: String, window_tactic: String) -> String:
+	# 개별 지시가 있으면 그것을, 없으면 창의 작전(=전체/임기응변)을 따른다
+	var o := String(member_tactics.get(cls, ""))
+	return o if o != "" else window_tactic
 var roto_shield := false             # 로토 3점 세트 (§B-7): 검=sword_rock, +방패/투구
 var roto_helm := false
 var lunch_until := 0.0               # 엄마의 도시락 버프 (playtime 기준, §B-6)
@@ -387,15 +393,17 @@ func epic_complete() -> bool:
 
 # ---------------------------------------------------------------- 몬스터 데이터
 
+# family = 전투창 계열색 (v3.7 §B): slime 청록 / beast 퍼플 / plant 라임 / undead 남보라 / fire 주황 / water 하늘
 const MONSTER_DEFS := [
-	{"id": "slime",  "name": "슬라임",      "hp": 7,  "atk": 2,  "gold": 4,  "exp": 2,  "tex": "res://assets/enemies/slime.png",        "scale": 1.0},
-	{"id": "bat",    "name": "박쥐",        "hp": 14, "atk": 4,  "gold": 10, "exp": 5,  "tex": "res://assets/enemies/bat.png",          "scale": 1.0},
-	{"id": "angry",  "name": "성난 슬라임", "hp": 26, "atk": 7,  "gold": 22, "exp": 11, "tex": "res://assets/enemies/slime_chaser.png", "scale": 1.0},
-	{"id": "cyclops","name": "외눈 괴수",   "hp": 44, "atk": 11, "gold": 45, "exp": 22, "tex": "res://assets/enemies/slime_fly.png",    "scale": 1.0},
+	{"id": "slime",  "name": "슬라임",      "hp": 7,  "atk": 2,  "gold": 4,  "exp": 2,  "tex": "res://assets/enemies/slime.png",        "scale": 1.0, "family": "slime"},
+	{"id": "bat",    "name": "박쥐",        "hp": 14, "atk": 4,  "gold": 10, "exp": 5,  "tex": "res://assets/enemies/bat.png",          "scale": 1.0, "family": "beast"},
+	{"id": "angry",  "name": "성난 슬라임", "hp": 26, "atk": 7,  "gold": 22, "exp": 11, "tex": "res://assets/enemies/slime_chaser.png", "scale": 1.0, "family": "plant"},
+	{"id": "cyclops","name": "외눈 괴수",   "hp": 44, "atk": 11, "gold": 45, "exp": 22, "tex": "res://assets/enemies/slime_fly.png",    "scale": 1.0, "family": "fire"},
 ]
+const BOSS_FAMILY := ["slime", "plant", "undead", "undead", "fire", "water"]  # 필드별 지배자 계열
 # v3.4 §B-7: 메인 라인 = 초원→숲→동굴→설원→마왕성. 수중(5) = 숨겨진 필드 ("바다의 노래")
 const FIELD_NAMES := ["초원", "숲", "동굴", "설원", "마왕성", "수중"]
-const BOSS_NAMES := ["초원의 지배자", "숲의 지배자", "동굴의 지배자", "설원의 지배자", "마왕", "수중의 지배자"]
+const BOSS_NAMES := ["초원의 지배자", "숲의 지배자", "동굴의 지배자", "복수(複數)의 감시자", "마왕", "수중의 지배자"]  # 설원 = 눈알 보스 (v3.7 §G)
 const FIELD_TINTS := [
 	Color(1, 1, 1),                # 초원
 	Color(0.8, 1.05, 0.75),       # 숲
@@ -555,6 +563,7 @@ func reset_all() -> void:
 	hero_name = ""
 	current_field = 0
 	tactic = ""
+	member_tactics = {}
 	tactic_known = false
 	roto_shield = false
 	roto_helm = false
@@ -653,7 +662,11 @@ func member_atk_flat(idx: int) -> int:
 	# 플랫 = 무기점의 영역 (v3.4 §B-5 — 주 성장축)
 	var m: Dictionary = members[idx]
 	var base: int = COMPANIONS[m["cls"]]["atk"]
-	return base + int(m["weapon_lv"]) * 2 + int(level / 2.0)
+	var flat: int = base + int(m["weapon_lv"]) * 2 + int(level / 2.0)
+	# 로토의 검 고유 보너스 (v3.8 §B-6 — 스토리 성장은 교체 이벤트로)
+	if m["cls"] == "hero" and sword_rock >= 2:
+		flat += 6
+	return flat
 
 func forge_mult(cls: String) -> float:
 	# 벼림 보정 = 대장간의 영역 (% 배율 — 플랫이 클수록 가치 상승)
@@ -974,12 +987,11 @@ func weapon_name(idx: int) -> String:
 	var m: Dictionary = members[idx]
 	var lv: int = m["weapon_lv"]
 	if m["cls"] == "hero":
-		# 용사의 검 = 로토 3점 세트 연동 (v3.2 §B-7) — 돈으로 벼릴 수 없다
-		if sword_rock < 2:
-			return "아빠의 목검"
-		if roto_complete() and epic_complete():
-			return "전설의 검·진"
-		return "전설의 검"
+		# v3.8 §B-6: 용사도 무기점·대장간 정식 편입. 로토의 검 = 무기 "교체" (강화 레벨 승계)
+		var base_h := "아빠의 목검"
+		if sword_rock >= 2:
+			base_h = "전설의 검·진" if (roto_complete() and epic_complete()) else "로토의 검"
+		return base_h + (" +%d" % lv if lv > 0 else "")
 	if WEAPON_NAMES.has(m["cls"]):
 		var stages: Array = WEAPON_NAMES[m["cls"]]
 		var base2: String = stages[2 if lv >= 10 else (1 if lv >= 5 else 0)]
@@ -1073,6 +1085,7 @@ func do_prestige() -> void:
 	roto_shield = false
 	roto_helm = false
 	tactic = ""
+	member_tactics = {}
 	lunch_until = 0.0
 	silver_seen = false
 	casino_up = {"jackpot": 0, "consol": 0, "hold": 0}
@@ -1120,6 +1133,7 @@ func save_game() -> void:
 		"sword_rock": sword_rock, "playtime": playtime, "deposit": deposit,
 		# v3.2
 		"hero_name": hero_name, "tactic": tactic, "tactic_known": tactic_known,
+		"member_tactics": member_tactics,
 		"roto_shield": roto_shield, "roto_helm": roto_helm, "silver_seen": silver_seen,
 		"titles": titles, "casino_up": casino_up, "stats": stats,
 	}
@@ -1229,6 +1243,7 @@ func load_game() -> void:
 	hero_name = String(d.get("hero_name", "용사" if int(d.get("version", 1)) < 6 else ""))
 	tactic = String(d.get("tactic", ""))
 	tactic_known = bool(d.get("tactic_known", false))
+	member_tactics = d.get("member_tactics", {})
 	roto_shield = bool(d.get("roto_shield", false))
 	roto_helm = bool(d.get("roto_helm", false))
 	silver_seen = bool(d.get("silver_seen", false))

@@ -78,6 +78,24 @@ func wake_up() -> void:
 	modulate = Color(2, 2, 2)
 	tw.tween_property(self, "modulate", Color(1, 1, 1), 0.5)
 
+var frogged := false
+
+func frogify() -> void:
+	# 개구리의 왈츠 (v3.6) — HP 1, 골드 2배로 홀린 채 춤춘다. 건드리면 한 방
+	if frogged or is_boss:
+		return
+	frogged = true
+	def = def.duplicate()
+	def["hp"] = 1
+	def["gold"] = int(def["gold"]) * 2
+	def["name"] = "홀린 " + String(def["name"])
+	if _sprite != null:
+		_sprite.self_modulate = Color(0.5, 1.3, 0.5)
+	var tw := create_tween()
+	tw.set_loops(6)
+	tw.tween_property(self, "scale", Vector2(1.15, 0.85), 0.12)
+	tw.tween_property(self, "scale", Vector2.ONE, 0.12)
+
 # ---------------------------------------------------------------- hover 인터페이스
 
 func kind_key() -> String:
@@ -92,6 +110,8 @@ func flavor() -> String:
 			return boss_name + ". 깊이 잠들어 있다. …아직은."
 		if tier >= 5:
 			return "마왕. 세계를 손에 넣은 자다."
+		if boss_name.contains("감시자"):
+			return "감시자가 당신의 시선을 불쾌해한다."  # 시선 설정에 대한 유일한 농담 (v3.7 §G)
 		return boss_name + ". 이 땅의 색은 저 녀석의 것이다."
 	return FLAVORS.get(def.get("id", ""), "몬스터다.")
 

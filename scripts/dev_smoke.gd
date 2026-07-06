@@ -212,11 +212,37 @@ func _run() -> void:
 		if is_instance_valid(w2) and not w2.closing:
 			cw = w2
 	assert(cw != null)
+	await get_tree().create_timer(0.3).timeout
+	assert(main.hud._combo_btn != null)  # v3.6: 만충 = 반짝이는 필살 버튼
+	var field_before := 0
+	for m2 in get_tree().get_nodes_in_group("monster"):
+		if is_instance_valid(m2) and not m2.is_boss and m2.is_visible_in_tree():
+			field_before += 1
 	main._fire_combo()
 	await get_tree().create_timer(2.5).timeout
 	assert(Game.combo_gauge < 0.2)  # 발동으로 리셋 (직후 승리가 +0.08 줄 수 있다)
 	assert(cw == null or not is_instance_valid(cw) or cw.sim.alive_enemies().is_empty())
-	print("[SMOKE] 합체기 OK — 참치 어택")
+	# v3.6: 필드 스윕 — 창 밖 몬스터도 쓸려나갔다
+	var field_after := 0
+	for m3 in get_tree().get_nodes_in_group("monster"):
+		if is_instance_valid(m3) and not m3.is_boss and m3.is_visible_in_tree():
+			field_after += 1
+	assert(field_before == 0 or field_after < field_before)
+	assert(main.hud._combo_btn == null)  # 버튼은 발동과 함께 사라진다
+	print("[SMOKE] 합체기 OK — 버튼/필드 스윕 (필드 %d→%d)" % [field_before, field_after])
+
+	# v3.6: 파티원 개별 작전 — 오버라이드가 창 작전을 이긴다
+	Game.tactic_known = true
+	Game.tactic = "attack"
+	Game.member_tactics["hero"] = "life"
+	var sim_m := BattleSim.new()
+	sim_m.setup([Game.MONSTER_DEFS[0]], false)
+	assert(Game.member_tactic_of("hero", sim_m.window_tactic) == "life")
+	assert(Game.member_tactic_of("priest", sim_m.window_tactic) == "attack")
+	assert(sim_m.tactic_in_mult("life") < 1.0 and sim_m.tactic_out_mult("attack") > 1.0)
+	Game.member_tactics.clear()
+	Game.tactic = ""
+	print("[SMOKE] 개별 작전 OK")
 
 	# 9.8) v3.1 — 교회 축복 + 도망 나팔
 	Game.add_gold(50000)
@@ -248,7 +274,7 @@ func _run() -> void:
 		Game.damage_member(i, 99999999)
 	await get_tree().create_timer(6.0).timeout
 	assert(Game.alive_count() == Game.members.size())
-	assert(Game.deposit == dep_before)  # v3.1 §B-8 — 전멸 페널티 면제
+	assert(Game.deposit >= dep_before)  # v3.1 §B-8 — 전멸 페널티 면제 (이자 틱은 덤)
 	assert(Game.stats["wipes"] >= 1)
 	assert(Game.medals_owned.has("ghost_warcry"))  # 쓰러져 본 자에게 주어진다
 	print("[SMOKE] 전멸/부활 OK — gold=%d 예금=%d" % [Game.gold, Game.deposit])
@@ -295,6 +321,23 @@ func _run() -> void:
 	Game.playtime = save_pt
 	print("[SMOKE] 밤/은빛 OK")
 
+	# 13.5) v3.7 — 복수의 감시자: 전투창 6개가 곧 보스
+	var wdef := {"hp": 600, "atk": 10, "gold": 240, "exp": 80}
+	main.boss_fighting = true
+	main.party.frozen = true
+	main._begin_watcher(wdef)
+	assert(main._watcher_eyes.size() == 6)
+	main._watcher_eyes[0]["sim"].combo_annihilate()
+	await get_tree().create_timer(2.5).timeout
+	assert(main._watcher_deadline > 0.0)  # 첫 눈이 감기면 카운트다운
+	for we in main._watcher_eyes:
+		if not we["down"]:
+			we["sim"].combo_annihilate()
+	await get_tree().create_timer(3.0).timeout
+	assert(not main._watcher_active and not main.boss_fighting)
+	assert(Game.bosses_defeated[3])
+	print("[SMOKE] 복수의 감시자 OK — 6눈 격파")
+
 	# 14) v3.2 — 로토 3점 + 마왕성 이중 열쇠
 	Game.add_exp(500000)  # Lv 10+ 보장
 	Game.sword_rock = 1
@@ -307,7 +350,7 @@ func _run() -> void:
 	assert(sr != null)
 	main._bump_swordrock(sr)
 	assert(Game.sword_rock == 2)
-	assert(Game.weapon_name(0).begins_with("전설의 검"))
+	assert(Game.weapon_name(0).begins_with("로토의 검"))  # v3.8: 교체 이벤트 (승계)
 	# 동굴 지배자 → 방패 / 수중 지배자 → 투구 (직접 격파 처리)
 	Game.posters_f[2] = 3
 	main._on_boss_defeated(2)
@@ -401,7 +444,7 @@ func _run() -> void:
 	assert(Game.party_ids == pids)
 	assert(int(Game.companion_weapons.get("warrior", 0)) == 1)   # 무기점 플랫
 	assert(int(Game.companion_forge.get("warrior", 0)) == 3)    # 대장간 벼림 (v3.4)
-	assert(Game.deposit == dep_before)
+	assert(Game.deposit >= dep_before)  # 이자 틱 허용
 	assert(Game.hero_name == "테스트용사")
 	assert(Game.roto_complete())
 	assert(Game.titles.size() == titles_n)

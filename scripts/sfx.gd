@@ -211,6 +211,8 @@ func _build_all() -> void:
 	_streams["chest"] = _to_stream(_concat([_tone(392.0, 0.07, 0.35, "square"), _tone(494.0, 0.07, 0.35, "square"), _tone(587.0, 0.12, 0.35, "square")]))
 	# 팔레트 전환 (세계가 물든다)
 	_streams["palette"] = _to_stream(_melody([[262.0, 0.14], [330.0, 0.14], [392.0, 0.14], [523.0, 0.14], [659.0, 0.4]], "tri", 0.4))
+	# 뾱 — 오프닝 팝인 (v3.8 §B-4. pitch 인자로 계단 음정)
+	_streams["pop"] = _to_stream(_mix(_tone(520.0, 0.09, 0.4, "sine", 300.0), _tone(1040.0, 0.05, 0.15, "tri"), 0.01))
 	# 주시 루프 (은은한 샤라락 — 루프 재생용)
 	var gz := _mix(_tone(1568.0, 0.5, 0.10, "sine", 0.0, 1.5), _tone(2093.0, 0.5, 0.07, "sine", 0.0, 1.5), 0.25)
 	var gz_stream := _to_stream(gz)

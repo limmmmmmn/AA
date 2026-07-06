@@ -17,7 +17,7 @@ var _flee_btn: Button = null
 var _enemy_nodes: Array = []          # TextureRect
 var _enemy_tex_sizes: Array = []      # 원본 텍스처 크기 (재배율용)
 var _enemy_base_pos: Array = []
-var _log_label: Label
+var _log_label: RichTextLabel
 var _base_position := Vector2.ZERO
 var _flash := 0.0
 var _golden: TextureRect = null
@@ -26,12 +26,13 @@ var _squish_cd := 0.0
 var _wiggle_t := 0.0
 var _t := 0.0
 
-# 타자기 (메시지 큐 → 한 글자씩)
+# 타자기 (v3.8: RichTextLabel + visible_characters — 자동 채색과 공존)
 var _msg_queue: Array[String] = []
-var _lines: Array[String] = []
-var _typing := ""
-var _typed := 0
+var _lines_bb: Array[String] = []   # 표시 중인 줄 (bbcode)
+var _lines_plain: Array[int] = []   # 줄별 순수 글자 수 (태그 제외)
+var _shown := 0.0                   # 드러난 글자 수 (float 누적)
 var _type_t := 0.0
+static var _strip_rx: RegEx = null
 
 func setup(p_sim: BattleSim, p_size: Vector2, boss: bool) -> void:
 	sim = p_sim
@@ -51,18 +52,29 @@ func setup(p_sim: BattleSim, p_size: Vector2, boss: bool) -> void:
 	mouse_entered.connect(_on_mouse_entered)
 	mouse_exited.connect(_on_mouse_exited)
 
+## 타자기 속도 튜닝 (v3.5 — 인스펙터에서 조절)
+@export var type_interval := 0.028       # 한 글자 간격 (초)
+@export var type_interval_busy := 0.014  # 큐가 밀릴 때
+@export var type_interval_rush := 0.008  # 큐 폭주 시
+
 func _ready() -> void:
 	_base_position = position
 	pivot_offset = size / 2.0
 	clip_contents = true
 	_build_enemies()
-	# v3.4 §B-1: 텍스트 로그 = 하단 1/3, 1~2줄. 몬스터가 주인공
-	_log_label = UILib.make_label("", UILib.FS)
-	_log_label.add_theme_constant_override("line_spacing", -3)
+	# v3.8: 로그 = RichTextLabel (자동 채색 + [slam] 크리 + visible_characters 타자기)
+	_log_label = get_node_or_null("%LogLabel")
+	if _log_label == null:
+		_log_label = RichTextLabel.new()
+		_log_label.bbcode_enabled = true
+		_log_label.scroll_active = false
+		_log_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_log_label.add_theme_constant_override("line_separation", -3)
+		add_child(_log_label)
+	_log_label.install_effect(SlamFX.new())
+	_log_label.install_effect(WhisperFX.new())
 	_log_label.position = Vector2(7, size.y - 28)
-	_log_label.size = Vector2(size.x - 14, 22)
-	_log_label.clip_text = true
-	add_child(_log_label)
+	_log_label.size = Vector2(size.x - 14, 26)
 	# 드퀘식 펼침 — 중앙에서 확장 (0.1초)
 	scale = Vector2(0.05, 0.05)
 	var tw := create_tween()
@@ -189,72 +201,124 @@ func is_golden_hovering() -> bool:
 # ---------------------------------------------------------------- 타자기 로그
 
 func _on_line(text: String) -> void:
-	_msg_queue.append(text)
+	_msg_queue.append(UILib.colorize(text))  # v3.8 §B-1: 자동 채색은 시스템의 일
+
+func _plain_len(bb: String) -> int:
+	if _strip_rx == null:
+		_strip_rx = RegEx.new()
+		_strip_rx.compile(r"\[.*?\]")
+	return _strip_rx.sub(bb, "", true).length()
+
+func _total_plain() -> int:
+	var t := 0
+	for pl in _lines_plain:
+		t += pl
+	return t + maxi(0, _lines_plain.size() - 1)  # 줄바꿈도 한 글자
+
+func _commit_line(bb: String) -> void:
+	# 두 줄만 산다 — 앞줄이 밀려나면 드러난 글자 수도 함께 이사
+	if _lines_bb.size() >= 2:
+		_shown = maxf(0.0, _shown - float(_lines_plain[0] + 1))
+		_lines_bb.pop_front()
+		_lines_plain.pop_front()
+	_lines_bb.append(bb)
+	_lines_plain.append(_plain_len(bb))
+	if _log_label != null:
+		_log_label.text = "\n".join(_lines_bb)
 
 func _type_tick(delta: float) -> void:
-	# 큐 폭주 시 오래된 메시지는 즉시 커밋
+	# 큐 폭주 시 오래된 메시지는 즉시 커밋 (드러난 채로)
 	while _msg_queue.size() > 6:
-		_commit_full_line(_msg_queue.pop_front())
-	if _typing == "" and not _msg_queue.is_empty():
-		_typing = _msg_queue.pop_front()
-		_typed = 0
+		_commit_line(_msg_queue.pop_front())
+		_shown = float(_total_plain())
+	var total := _total_plain()
+	if int(_shown) >= total and not _msg_queue.is_empty():
+		_commit_line(_msg_queue.pop_front())
+		total = _total_plain()
 		_type_t = 0.0
-		_lines.append("")
-		while _lines.size() > 2:
-			_lines.pop_front()
-	if _typing == "":
+	if int(_shown) >= total:
+		if _log_label != null:
+			_log_label.visible_characters = -1
 		return
-	# 텍스트 속도 옵션: 순간 = 즉시 커밋 (v3.3 §D)
+	# 텍스트 속도 옵션: 순간 = 즉시 (v3.3 §D)
 	var tmult: float = Game.opt_type_mult()
 	if tmult <= 0.0:
-		_lines[_lines.size() - 1] = _typing
-		_typing = ""
-		_update_log()
+		_shown = float(total)
+		_log_label.visible_characters = -1
 		return
-	# 큐가 밀릴수록 타자가 빨라진다
-	var interval := 0.028 * tmult
+	# 큐가 밀릴수록 타자가 빨라진다 (@export 튜닝)
+	var interval := type_interval * tmult
 	if _msg_queue.size() >= 3:
-		interval = 0.008 * tmult
+		interval = type_interval_rush * tmult
 	elif _msg_queue.size() >= 1:
-		interval = 0.014 * tmult
+		interval = type_interval_busy * tmult
 	_type_t += delta
-	while _type_t >= interval and _typed < _typing.length():
+	while _type_t >= interval and int(_shown) < total:
 		_type_t -= interval
-		_typed += 1
-		if _typed % 3 == 1:
+		_shown += 1.0
+		if int(_shown) % 3 == 1:
 			Sfx.play("blip", randf_range(0.85, 1.15), -14.0)
-	_lines[_lines.size() - 1] = _typing.substr(0, _typed)
-	_update_log()
-	if _typed >= _typing.length():
-		_typing = ""
+	_log_label.visible_characters = int(_shown)
 
-func _commit_full_line(text: String) -> void:
-	_lines.append(text)
-	while _lines.size() > 2:
-		_lines.pop_front()
-	_update_log()
+# ---------------------------------------------------------------- draw (v3.7: 무테 유색 카드 — 드퀘1 고증)
 
-func _update_log() -> void:
-	if _log_label != null:
-		_log_label.text = "\n".join(_lines)
+var _card_sb: StyleBoxFlat = null
+var _frame_sb: StyleBoxFlat = null
 
-# ---------------------------------------------------------------- draw (이중 테두리 + ▼)
+func _card_color() -> Color:
+	# 몬스터 계열색 (§B) — 보스는 살짝 어둡게 눌러 위압감
+	var fam := "slime"
+	if sim != null and not sim.enemies.is_empty():
+		fam = String(sim.enemies[0].get("family", "slime"))
+	var c := UILib.family_color(fam)
+	if is_boss:
+		c = c.darkened(0.25)
+	if Game.is_night():
+		c = c.darkened(0.15)
+	return c
 
 func _draw() -> void:
-	draw_rect(Rect2(Vector2.ZERO, size), UILib.COL_BG, true)
-	var border := UILib.COL_WHITE
-	if sim != null and sim.hovered:
-		# 주시 중 — 금색 테두리가 숨쉬듯 맥동한다 (v3.1 §B-7-1)
-		var pulse := 0.75 + 0.25 * sin(_t * 5.0)
-		border = Color(UILib.COL_GOLD.r * pulse + 0.2, UILib.COL_GOLD.g * pulse + 0.2, UILib.COL_GOLD.b * pulse * 0.5)
+	# 무테 유색 카드 — 라운드 + 하단 그림자 (필드 위에 떠 있는 카드)
+	if _card_sb == null:
+		# v3.8 §B-3: "색종이 → 떠 있는 카드" — 1px 남색 아웃라인 + 하단 드롭섀도
+		_card_sb = StyleBoxFlat.new()
+		_card_sb.set_corner_radius_all(2)
+		_card_sb.set_border_width_all(1)
+		_card_sb.border_color = Color("1a1c2c")
+		_card_sb.shadow_color = Color(0.102, 0.11, 0.173, 0.55)
+		_card_sb.shadow_size = 2
+		_card_sb.shadow_offset = Vector2(0, 2)
+	_card_sb.bg_color = _card_color()
+	draw_style_box(_card_sb, Rect2(Vector2.ZERO, size))
+	# 텍스트 존 — 하단 1/3에 반투명 남색 띠 (어느 계열색 위에서도 읽히게)
+	var strip_h := size.y / 3.0
+	draw_rect(Rect2(Vector2(0, size.y - strip_h), Vector2(size.x, strip_h)), Color(0.102, 0.11, 0.173, 0.78), true)
+	# 상태 오버레이 (정보 레이어 — §C)
+	if _frame_sb == null:
+		_frame_sb = StyleBoxFlat.new()
+		_frame_sb.draw_center = false
+		_frame_sb.set_corner_radius_all(2)
+		_frame_sb.set_border_width_all(2)
+	var frame_col := Color(0, 0, 0, 0)
+	if sim != null and sim.golden_active:
+		# 황금/은빛 슬라임 = 금/은 특수 프레임
+		frame_col = Color(0.75, 0.78, 0.85) if sim.golden_silver else UILib.COL_GOLD
+		frame_col.a = 0.8 + 0.2 * sin(_t * 7.0)
+	elif sim != null and sim.hovered:
+		# 호버 = 금테가 "생긴다" — 무테→유테 전환이 곧 시선의 시각화
+		var pulse := 0.8 + 0.2 * sin(_t * 5.0)
+		frame_col = Color(UILib.COL_GOLD.r, UILib.COL_GOLD.g, UILib.COL_GOLD.b, pulse)
+	elif Game.lowest_hp_ratio() < 0.3 and sim != null and not sim.finished:
+		# 위험 — 파티가 밀리는 중, 가장자리 적색 점멸
+		if sin(_t * 8.0) > 0.0:
+			frame_col = UILib.COL_RED
 	if _flash > 0.0:
-		border = UILib.COL_GOLD if int(_flash * 12.0) % 2 == 0 else UILib.COL_WHITE
-	# 굵은 외곽선(2px) + 1px 간격 + 얇은 안쪽 선 — 드퀘 정품 문법
-	draw_rect(Rect2(Vector2(1, 1), size - Vector2(2, 2)), border, false, 2.0)
-	var inner := Color(0.6, 0.15, 0.15) if is_boss else Color(border.r, border.g, border.b, 0.85)
-	draw_rect(Rect2(Vector2(5, 5), size - Vector2(10, 10)), inner, false, 1.0)
+		frame_col = UILib.COL_GOLD if int(_flash * 12.0) % 2 == 0 else UILib.COL_WHITE
+	if frame_col.a > 0.01:
+		_frame_sb.border_color = frame_col
+		draw_style_box(_frame_sb, Rect2(Vector2.ZERO, size))
 	# 대기 커서 ▼ — 할 말이 다 찍혔을 때 깜빡인다 (자동 진행이지만, 문법이니까)
-	if _typing == "" and _msg_queue.is_empty() and not _lines.is_empty() and sin(_t * 6.0) > 0.0:
+	if int(_shown) >= _total_plain() and _msg_queue.is_empty() and not _lines_bb.is_empty() and sin(_t * 6.0) > 0.0:
 		var cx := size.x / 2.0
 		var cy := size.y - 7.0
 		draw_colored_polygon(PackedVector2Array([
