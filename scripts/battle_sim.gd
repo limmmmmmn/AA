@@ -232,11 +232,10 @@ func _apply_enemy_damage(i: int, dmg: int, crit: bool, log_line: bool) -> void:
 	var e: Dictionary = enemies[i]
 	if e["dead"]:
 		return
-	# 사냥꾼의 추적 — 수배서에 실리는 상위 몬스터/보스에게 보너스
+	# 정찰 보고 (게시판 업글, v3.9) — 수배 몬스터/지배자에게 보너스
 	var mid_t: String = String(e.get("mid", ""))
-	var track_s := Game.passive_scale("track")
-	if track_s > 0.0 and (is_boss or mid_t == "angry" or mid_t == "cyclops"):
-		dmg = int(dmg * (1.0 + 0.25 * track_s))
+	if Game.up["track"] > 0 and (is_boss or mid_t == "angry" or mid_t == "cyclops"):
+		dmg = int(dmg * (1.0 + 0.25 * Game.up["track"]))
 	# 무리 사냥꾼 — 적 4마리 이상인 창에서 +50% (v3.2 조건형)
 	if Game.medal_on("pack_hunter") and enemies.size() >= 4:
 		dmg = int(dmg * 1.5)
@@ -286,25 +285,16 @@ func _finish_victory() -> void:
 		g += int(e["gold"])
 		xp += int(e["exp"])
 	g = int(g * Game.gold_multiplier() * tactic_gold_mult())
-	# 어부 아우의 그물 — 무리 창(적 3+)의 골드 +30% (수중에서 각성, 후미의 긍지 적용)
-	if enemies.size() >= 3:
-		var net_s := Game.passive_scale("net")
-		if net_s > 0.0:
-			g = int(g * (1.0 + 0.3 * net_s))
-		# 어부의 긍지 — 어부 편성 시 무리 창 보상 +50% (v3.2 조건형)
-		if Game.medal_on("fisher_pride") and (Game.has_member("fisher_a") or Game.has_member("fisher_b")):
-			g = int(g * 1.5)
+	# 어부의 긍지 — 어부 형제가 마을에 있으면 무리 창 보상 +50% (v3.9: 주민 조건)
+	if enemies.size() >= 3 and Game.medal_on("fisher_pride") and Game.residents.get("fishers", false):
+		g = int(g * 1.5)
 	# 통계 — 미믹 승수 (도전과제식 훈장의 재료)
 	for e in enemies:
 		if String(e.get("mid", "")) == "mimic":
 			Game.add_stat("mimic_wins")
 	line.emit("몬스터를 물리쳤다!")
 	line.emit("%d G를 손에 넣었다!" % g)
-	# 상인의 잡템 습득 — 전투 후 자잘한 덤
-	if Game.passive_on("discount") and randf() < 0.35:
-		var scrap := maxi(1, int(g * 0.08))
-		g += scrap
-		line.emit("상인이 잡동사니를 주웠다! +%d G" % scrap)
+	# (v3.9: 상인 잡템 패시브 폐지 — 상인은 주민)
 	# 도적의 훔치기 — 가끔 작은 메달을 슬쩍
 	if Game.passive_on("steal"):
 		var p := 0.02 if Game.medal_on("loyal_heart") else 0.01

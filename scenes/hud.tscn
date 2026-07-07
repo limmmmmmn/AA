@@ -113,22 +113,6 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 
-[node name="PartyBar" type="PanelContainer" parent="PartyRoot" unique_id=1496415031]
-unique_name_in_owner = true
-visible = false
-layout_mode = 0
-offset_left = 544.0
-offset_top = 64.0
-offset_right = 634.0
-offset_bottom = 200.0
-theme_override_styles/panel = SubResource("StyleBoxFlat_5ysmq")
-script = ExtResource("2")
-
-[node name="PartyVBox" type="VBoxContainer" parent="PartyRoot/PartyBar" unique_id=996834193]
-unique_name_in_owner = true
-layout_mode = 2
-theme_override_constants/separation = 3
-
 [node name="EventBox" type="PanelContainer" parent="." unique_id=1529308810]
 unique_name_in_owner = true
 visible = false
@@ -169,8 +153,9 @@ script = ExtResource("2")
 
 [node name="TooltipLabel" type="Label" parent="Tooltip" unique_id=276918499]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 0)
 layout_mode = 2
-autowrap_mode = 2
+autowrap_mode = 0
 
 [node name="FxRoot" type="Control" parent="." unique_id=1777666372]
 unique_name_in_owner = true

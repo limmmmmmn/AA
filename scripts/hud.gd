@@ -31,8 +31,6 @@ var main: Node2D
 @onready var _top_panel: PanelContainer = %TopPanel
 @onready var _top_label: Label = %TopLabel
 @onready var _xp_bar: ColorRect = %XPBar
-@onready var _party_bar: PanelContainer = %PartyBar
-@onready var _party_vbox: VBoxContainer = %PartyVBox
 @onready var _tooltip: PanelContainer = %Tooltip
 @onready var _tooltip_label: Label = %TooltipLabel
 @onready var _event_box: PanelContainer = %EventBox
@@ -41,6 +39,15 @@ var main: Node2D
 
 const MEMBER_BOX_SCENE := preload("res://scenes/member_box.tscn")
 
+# v4.0 §B-3: 파티 카드 규격 — 640×360 기준 절대값 (정보 캡슐 8,8/152×28과 같은 y·높이)
+const CARD_X0 := 168.0
+const CARD_Y := 8.0
+const CARD_W := 88.0
+const CARD_H := 28.0
+const CARD_GAP := 8.0
+const GAUGE_X := CARD_X0 + 4 * (CARD_W + CARD_GAP)  # 552 — 4장 고정 규격의 우측 끝
+
+var _party_strip: Array = []   # 카드+게이지 박스 (PartyRoot 자식)
 var _member_boxes: Array = []
 var _casino_refs: Dictionary = {}
 var _spin_active := false
@@ -82,46 +89,54 @@ func _ready() -> void:
 	# 세이브에서 이미 태어난 UI는 연출 없이 바로 보여준다 (탄생은 최초 1회뿐)
 	if Game.ui_unlocked["gold"]:
 		_top_panel.visible = true
-	if Game.ui_unlocked["party"]:
-		_party_bar.visible = true
 
 func _process(delta: float) -> void:
 	# 툴팁 (속삭임) — 커서 추종 (v3.7 §E)
 	var tip := _hover_text if _hover_text != "" else menu_hover
 	if tip != "" and not _title_suppress:
-		_tooltip_label.text = tip
+		if _tooltip_label.text != tip:
+			_tooltip_label.text = tip
+			# 폰트로 폭을 직접 재서 라벨 최소폭을 못박는다 — reset_size의 오토랩/최소폭 퀴리 회피
+			var fnt := _tooltip_label.get_theme_font("font")
+			var fsz := _tooltip_label.get_theme_font_size("font_size")
+			# 항상 한 줄 자연 폭 — 오토랩+PanelContainer 최소높이 퀴리(세로 쪼개짐)를 통째로 우회.
+			# 플레이버는 짧은 문장이라 640 화면 폭이면 충분하고, 위치는 clampf로 화면 안에 붙는다.
+			var tw := fnt.get_string_size(tip, HORIZONTAL_ALIGNMENT_LEFT, -1, fsz).x
+			_tooltip_label.autowrap_mode = TextServer.AUTOWRAP_OFF
+			_tooltip_label.custom_minimum_size = Vector2(ceil(tw), 0)
+			_tooltip.reset_size()
 		_tooltip.visible = true
-		_tooltip.reset_size()
 		var mp := get_viewport().get_mouse_position() + Vector2(12, 14)
 		mp.x = clampf(mp.x, 2.0, 638.0 - _tooltip.size.x)
 		mp.y = clampf(mp.y, 2.0, 358.0 - _tooltip.size.y)
 		_tooltip.position = mp
 	else:
 		_tooltip.visible = false
-	# 앰비언트 팝 — 희소해야 시가 된다 (수 분당 1회)
-	if not _title_suppress and not is_menu_open():
+	# 플레이버 — 가끔 대사 박스로 (v3.9: 앰비언트 팝 폐지)
+	if not _title_suppress and not is_menu_open() and not _event_showing and _event_q.is_empty():
 		_ambient_t -= delta
 		if _ambient_t <= 0.0:
-			_ambient_t = randf_range(100.0, 190.0)
-			_spawn_ambient()
+			_ambient_t = randf_range(200.0, 330.0)
+			var pair: Array = AMBIENT_PAIRS[randi() % AMBIENT_PAIRS.size()]
+			event("%s  [whisper]%s[/whisper]" % [pair[0], pair[1]], 4.0)
 	# 이벤트 박스 큐 소화
 	if not _event_showing and not _event_q.is_empty():
 		_show_next_event()
-	# 파티 컬럼 — 우측 세로 고정 (v3.8 §B-2, FF 오마주. 자라면 아래로)
-	if _party_bar.visible:
-		_party_bar.position = Vector2(636.0 - _party_bar.size.x, 64.0)
 	# 메뉴 스크롤 높이 — 내용에 맞추되 화면을 넘지 않게
 	if _menu_sc != null and is_instance_valid(_menu_sc) and _menu_v != null and is_instance_valid(_menu_v):
 		var want: float = minf(_menu_v.get_combined_minimum_size().y, 252.0)
 		if absf(_menu_sc.custom_minimum_size.y - want) > 0.5:
 			_menu_sc.custom_minimum_size = Vector2(312, want)
+	# 소집 토글 — 겹쳐보기 구매 후 (v3.9 §B-4)
+	_update_muster_btn()
 	# XP 미니바 — 다음 레벨까지의 거리
 	if _top_panel.visible and is_instance_valid(_xp_bar):
 		var w: float = maxf(0.0, _top_panel.size.x - 16.0)
 		_xp_bar.size = Vector2(w * clampf(float(Game.exp) / maxf(1.0, float(Game.exp_to_next())), 0.0, 1.0), 2)
 	# 성수 — 자동 재생 / 치유의 눈길 호버 시 소모하며 회복 (셀은 파티 바 안, v3.7 §D)
 	if Game.buildings["church"]:
-		if _holy_cell != null and is_instance_valid(_holy_cell) and not _holy_cell.visible:
+		if _holy_cell != null and is_instance_valid(_holy_cell) and not _holy_cell.visible \
+				and Game.ui_unlocked["party"] and not _title_suppress:
 			_holy_cell.visible = true
 		var healing := false
 		if _hover_heal_idx >= 0 and _hover_heal_idx < Game.members.size() and Game.holy > 0.0:
@@ -137,7 +152,7 @@ func _process(delta: float) -> void:
 		if not healing:
 			Game.holy = minf(Game.holy_max(), Game.holy + Game.holy_regen_rate() * delta)
 		if _holy_bar != null and is_instance_valid(_holy_bar):
-			_holy_bar.size = Vector2(70.0 * clampf(Game.holy / maxf(1.0, Game.holy_max()), 0.0, 1.0), 3)
+			_holy_bar.size = Vector2(42.0 * clampf(Game.holy / maxf(1.0, Game.holy_max()), 0.0, 1.0), 3)
 			_holy_bar.color = Color(0.9, 0.95, 1.0) if healing else Color(0.55, 0.8, 1.0)
 	# 합체기 게이지 — 조합 성립 시 상시 표시 (v3.4)
 	_update_combo_bar()
@@ -159,9 +174,9 @@ func unlock_ui(id: String) -> void:
 			target = _top_panel
 			_update_top()
 		"party":
-			_party_bar.visible = true
 			_rebuild_members()
-			target = _party_bar
+			if not _member_boxes.is_empty():
+				target = _member_boxes[0]["panel"]
 		"quest":
 			pass  # 촌장의 부탁이 열린다 — UI가 아니라 세계(촌장)가 창구
 	if target != null:
@@ -311,81 +326,103 @@ func _spawn_ambient() -> void:
 # ---------------------------------------------------------------- 파티 스테이터스
 
 func _rebuild_members() -> void:
-	# v3.8 §B-2: 파티 컬럼 — 우측 세로 스택 (FF 오마주). 위=합체기, 아래=성수
-	for c in _party_vbox.get_children():
-		c.queue_free()
+	# v4.0 §B-3: 개별 박스 4개 — 통합 바 폐지. 캡슐과 같은 y·높이, 폭 88 균일, 간격 8 (하드코딩 승인)
+	for old in _party_strip:
+		if is_instance_valid(old):
+			old.queue_free()
+	_party_strip = []
 	_member_boxes = []
 	_holy_cell = null
 	_holy_bar = null
 	_combo_cell = null
 	_combo_fill = null
 	if not Game.ui_unlocked["party"]:
-		_party_bar.visible = false
 		return
-	_party_bar.visible = not _title_suppress
-	# ① 합체기 게이지 (컬럼 최상단, 가로 바 — 조합 성립 시만)
-	_combo_cell = Control.new()
-	_combo_cell.custom_minimum_size = Vector2(74, 7)
-	_combo_cell.visible = false
-	_party_vbox.add_child(_combo_cell)
-	var cbg := ColorRect.new()
-	cbg.color = Color(0.15, 0.13, 0.22)
-	cbg.position = Vector2(0, 1)
-	cbg.size = Vector2(74, 5)
-	_combo_cell.add_child(cbg)
-	_combo_fill = ColorRect.new()
-	_combo_fill.color = UILib.COL_GOLD
-	cbg.add_child(_combo_fill)
-	_sep()
-	# ② 파티 카드 — 얇게 (이름 + HP바. 숫자는 호버 툴팁)
+	var vis := not _title_suppress
 	var n := Game.members.size()
 	for i in n:
-		var cell: Control = MEMBER_BOX_SCENE.instantiate()
-		cell.mouse_filter = Control.MOUSE_FILTER_STOP
-		_party_vbox.add_child(cell)
+		var card := _strip_box(Vector2(CARD_X0 + i * (CARD_W + CARD_GAP), CARD_Y), Vector2(CARD_W, CARD_H))
+		card.visible = vis
+		card.mouse_filter = Control.MOUSE_FILTER_STOP
 		var mi := i
-		cell.mouse_entered.connect(func():
+		card.mouse_entered.connect(func():
 			if Game.up["heal_eye"] > 0:
 				_hover_heal_idx = mi)
-		cell.mouse_exited.connect(func():
+		card.mouse_exited.connect(func():
 			if _hover_heal_idx == mi:
 				_hover_heal_idx = -1)
 		# 카드 클릭 = 스테이터스 창 (v3.4 §B-12)
-		cell.gui_input.connect(func(ev: InputEvent):
+		card.gui_input.connect(func(ev: InputEvent):
 			if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
 				open_status(mi))
-		_member_boxes.append({
-			"panel": cell,
-			"name": cell.get_node("%NameLabel"),
-			"bar": cell.get_node("%Bar"),
-		})
+		var inner: Control = card.get_node("Inner")
+		var nm := UILib.make_label("", UILib.FS)
+		nm.position = Vector2(6, 2)
+		nm.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		inner.add_child(nm)
+		var bbg := ColorRect.new()
+		bbg.color = Color(0.15, 0.16, 0.24)
+		bbg.position = Vector2(6, 21)
+		bbg.size = Vector2(CARD_W - 12.0, 3)
+		bbg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		inner.add_child(bbg)
+		var bar := ColorRect.new()
+		bar.color = UILib.COL_GREEN
+		bar.size = Vector2(CARD_W - 12.0, 3)
+		bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		bbg.add_child(bar)
+		_member_boxes.append({"panel": card, "name": nm, "bar": bar})
 		_update_member(i)
-		if i < n - 1:
-			_sep()
-	# ③ 성수 게이지 (컬럼 최하단, 교회가 서면)
-	_sep()
-	_holy_cell = VBoxContainer.new()
-	_holy_cell.add_theme_constant_override("separation", 2)
-	_holy_cell.custom_minimum_size = Vector2(74, 18)
-	_holy_cell.visible = Game.buildings["church"]
-	_party_vbox.add_child(_holy_cell)
+	# 게이지 2종 — 카드 열 우측 끝, 동일 높이 소형 박스 (§B-3)
+	_combo_cell = _strip_box(Vector2(GAUGE_X, CARD_Y), Vector2(14, CARD_H))
+	_combo_cell.visible = false
+	var cin: Control = _combo_cell.get_node("Inner")
+	var cbg := ColorRect.new()
+	cbg.color = Color(0.15, 0.13, 0.22)
+	cbg.position = Vector2(4.5, 4)
+	cbg.size = Vector2(5, 20)
+	cbg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cin.add_child(cbg)
+	_combo_fill = ColorRect.new()
+	_combo_fill.color = UILib.COL_GOLD
+	_combo_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cbg.add_child(_combo_fill)
+	_holy_cell = _strip_box(Vector2(GAUGE_X + 14.0 + CARD_GAP, CARD_Y), Vector2(52, CARD_H))
+	_holy_cell.visible = vis and Game.buildings["church"]
+	var hin: Control = _holy_cell.get_node("Inner")
 	var hl := UILib.make_label("성수", UILib.FS, UILib.COL_GOLD)
-	_holy_cell.add_child(hl)
+	hl.position = Vector2(5, 2)
+	hl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hin.add_child(hl)
 	var hbg := ColorRect.new()
 	hbg.color = Color(0.1, 0.13, 0.22)
-	hbg.custom_minimum_size = Vector2(70, 3)
-	_holy_cell.add_child(hbg)
+	hbg.position = Vector2(5, 21)
+	hbg.size = Vector2(42, 3)
+	hbg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hin.add_child(hbg)
 	_holy_bar = ColorRect.new()
 	_holy_bar.color = Color(0.55, 0.8, 1.0)
-	_holy_bar.size = Vector2(70, 3)
+	_holy_bar.size = Vector2(42, 3)
+	_holy_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hbg.add_child(_holy_bar)
 
-func _sep() -> void:
-	# 칸막이 — 1px 크림 라인 (가로, 테두리 소음 최소화)
-	var s := ColorRect.new()
-	s.color = Color(0.957, 0.941, 0.878, 0.3)
-	s.custom_minimum_size = Vector2(72, 1)
-	_party_vbox.add_child(s)
+func _strip_box(pos: Vector2, sz: Vector2) -> DQPanel:
+	# 스트립 공용 소형 박스 — 절대좌표 고정. 내부 배치는 "Inner"(Control)에 수동으로
+	# (PanelContainer는 자식을 full-rect로 강제하므로 Inner가 완충층)
+	var p := DQPanel.new()
+	var sb: StyleBoxFlat = p.get_theme_stylebox("panel").duplicate()
+	sb.set_content_margin_all(0)
+	p.add_theme_stylebox_override("panel", sb)
+	p.position = pos
+	p.size = sz
+	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var inner := Control.new()
+	inner.name = "Inner"
+	inner.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	p.add_child(inner)
+	_party_root.add_child(p)
+	_party_strip.append(p)
+	return p
 
 func _update_member(i: int) -> void:
 	if i >= _member_boxes.size():
@@ -398,7 +435,7 @@ func _update_member(i: int) -> void:
 	b["name"].text = ("†" if ghost else "") + String(m["name"])
 	b["name"].add_theme_color_override("font_color", UILib.COL_GRAY if ghost else UILib.COL_WHITE)
 	var ratio: float = float(m["hp"]) / maxf(1.0, float(m["max_hp"]))
-	b["bar"].size = Vector2(56.0 * ratio, 3)
+	b["bar"].size = Vector2((CARD_W - 12.0) * ratio, 3)
 	b["bar"].color = UILib.COL_GRAY if ghost else (UILib.COL_GREEN if ratio > 0.35 else UILib.COL_RED)
 	# 유령 칸 = 반투명 + 청색 (§D). 숫자는 툴팁으로 (넘버는 원할 때만)
 	b["panel"].modulate = Color(0.7, 0.8, 1.25, 0.55) if ghost else Color(1, 1, 1, 1)
@@ -458,6 +495,27 @@ func popup(text: String, screen_pos: Vector2, color: Color = UILib.COL_GOLD) -> 
 	tw.parallel().tween_property(l, "modulate:a", 0.0, 0.8).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 	tw.tween_callback(l.queue_free)
 
+var _muster_btn: Button = null
+
+func _update_muster_btn() -> void:
+	# 겹쳐보기 = 흩어진 창들을 한 스택으로 소집하는 토글 (v3.9 §B-4 — 후반 정리용 QoL)
+	var want: bool = Game.up["stack"] > 0 and not _title_suppress and Game.ui_unlocked["party"]
+	if want and _muster_btn == null:
+		_muster_btn = UILib.make_button("소집", UILib.FS)
+		_muster_btn.pressed.connect(func():
+			if main != null:
+				main.stack_on = not main.stack_on
+				_muster_btn.text = "해산" if main.stack_on else "소집"
+				Sfx.play("click")
+				main._relayout_windows())
+		_party_root.add_child(_muster_btn)
+	elif not want and _muster_btn != null:
+		if is_instance_valid(_muster_btn):
+			_muster_btn.queue_free()
+		_muster_btn = null
+	if _muster_btn != null and is_instance_valid(_muster_btn):
+		_muster_btn.position = Vector2(4.0, 40.0)
+
 # ---------------------------------------------------------------- 스택 뱃지 (v3.4 §B-1)
 
 var _stack_badge: PanelContainer = null
@@ -482,9 +540,9 @@ var _loot_toasts: Array = []
 func loot_toast(text: String, kind: String = "medal") -> void:
 	# 드퀘 미니 창 슬라이드 인 — 종류별 효과음, 연속 획득은 세로 큐
 	match kind:
-		"medal": Sfx.play("fanfare", 1.1)
-		"small": Sfx.play("golden", 1.3)
-		_: Sfx.play("chest")
+		"medal": Sfx.play("toast1")
+		"small": Sfx.play("toast2")
+		_: Sfx.play("toast3")
 	var p := UILib.make_panel(UILib.COL_GOLD)
 	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_fx_root.add_child(p)
@@ -695,6 +753,8 @@ func is_menu_open() -> bool:
 	return _menu_kind != ""
 
 func close_menu() -> void:
+	if _menu_kind == "casino":
+		Music.set_casino(false)
 	_menu_kind = ""
 	menu_hover = ""
 	remote_open = false
@@ -786,46 +846,123 @@ func open_chief() -> void:
 				func(): _chief_pay(r["id"]))
 		else:
 			_menu_row(v, String(r["name"]), String(r["ask"]), cond_txt, false, func(): pass)
-	# 동료 부탁 — 객원들이 촌장을 통해 손을 내민다 (v3.1)
-	var asks: Array = main.candidate_asks()
-	if not asks.is_empty():
-		v.add_child(UILib.make_label("— 동행을 원하는 자들 —", UILib.FS, UILib.COL_GOLD))
-		for a in asks:
-			var cd: Dictionary = Game.COMPANIONS[a["id"]]
-			var lv_ok2: bool = int(a["lv"]) == 0 or Game.level >= int(a["lv"])
-			var cost2: int = Game.price(int(a["gold"]))
-			_menu_row(v, String(cd["name"]) + " (객원)", String(a["ask"]),
-				"%d G" % cost2 if lv_ok2 else "Lv%d 필요" % int(a["lv"]),
-				lv_ok2 and Game.gold >= cost2,
-				func(): _chief_pay_companion(String(a["id"])))
-	# 건설 — 게시판·항아리 (의식과 살림)
-	v.add_child(UILib.make_label("— 건설 —", UILib.FS, UILib.COL_GOLD))
-	if not Game.buildings["board"]:
-		var bc := int(60 * pow(2.0, 0))
-		_menu_row(v, "수배 게시판", "위험한 놈들을 불러들인다 (레벨 게이트: Lv 2)", "%d G" % bc,
-			Game.level >= 2 and Game.gold >= bc, func(): _chief_build_board(bc))
-	if Game.extra_pots < 3:
-		var pc := int(30 * pow(2.2, Game.extra_pots))
-		_menu_row(v, "항아리 확충 %d/3" % Game.extra_pots, "광장에 항아리 +2", "%d G" % pc,
-			Game.gold >= pc, func(): _chief_add_pots(pc))
-	# 전선 확대 / 원정 (분산 수치 업그레이드 — 촌장 담당분)
-	v.add_child(UILib.make_label("— 전선 확대 —", UILib.FS, UILib.COL_GOLD))
+	# v4.0 §B-2/B-4: 촌장 = 부탁 + 건설 카탈로그 (수치 업글은 훈련소/마구간/상점으로 분업)
+	var blds: Array = []
+	var fixs: Array = []
+	for e in main.BUILD_CATALOG:
+		if main.catalog_built(e) or not main.catalog_unlocked(e):
+			continue
+		if e["cat"] == "building":
+			blds.append(e)
+		else:
+			fixs.append(e)
+	if not blds.is_empty():
+		v.add_child(UILib.make_label("— 건설: 건물 —", UILib.FS, UILib.COL_GOLD))
+		for e in blds:
+			_catalog_row(v, e)
+	if not fixs.is_empty() or Game.extra_pots < 3:
+		v.add_child(UILib.make_label("— 건설: 기물 —", UILib.FS, UILib.COL_GOLD))
+		for e in fixs:
+			_catalog_row(v, e)
+		if Game.extra_pots < 3:
+			var pc := int(30 * pow(2.2, Game.extra_pots))
+			_menu_row(v, "항아리 확충 %d/3" % Game.extra_pots, "광장에 항아리 +2", "%d G" % pc,
+				Game.gold >= pc, func(): _chief_add_pots(pc))
+	if blds.is_empty() and fixs.is_empty() and Game.extra_pots >= 3:
+		v.add_child(UILib.make_label("더 지을 것이 없다. 마을은 완성됐다.", UILib.FS, UILib.COL_GRAY))
+
+func _catalog_row(v: VBoxContainer, e: Dictionary) -> void:
+	var cost := int(e["cost"])
+	_menu_row(v, String(e["name"]), String(e["desc"]), "%d G" % cost,
+		Game.gold >= cost, func(): _chief_build(String(e["id"])))
+
+func _chief_build(id: String) -> void:
+	# 건설 → 메뉴 닫힘 → 건물 팝 + 입주 연출을 그대로 본다 (§B-4)
+	if main.buy_catalog(id):
+		close_menu()
+	else:
+		open_chief()
+
+func open_training() -> void:
+	# v4.0 §B-2: 훈련소 — 전선의 모든 것
+	_menu_kind = "train"
+	var v := _menu_panel("훈련소 — \"전선은 넓을수록 좋다!\"")
 	_up_row(v, "win_cap", "전투창 확장", "동시 전투창 +1", 100, 2.2, 5, 2 + Game.up["win_cap"] * 2)
 	_up_row(v, "battle_speed", "전투 가속", "전투 턴 간격 -7%", 25, 1.22, 12, 0)
-	# v3.4 §B-3: 무리 = 편성 인원 연동. 업글은 +1 보정만
 	_up_row(v, "density", "무리 유인", "창당 최대 적 = 편성 인원. 여기에 +1 보정", 160, 1.0, 1, 4)
-	if Game.clock_on():
-		_up_row(v, "lantern", "등불", "밤 시야 반경 확장 (최종: 대열 전체가 빛의 뱀)", 120, 1.9, 3, 0)
-	v.add_child(UILib.make_label("— 원정 —", UILib.FS, UILib.COL_GOLD))
-	_up_row(v, "speed", "이속 강화", "파티 이동 속도 +8%", 25, 1.2, 9, 0)
-	_up_row(v, "shovel", "삽", "반짝이는 땅을 판다", 150, 1.0, 1, 0)
+	_up_row(v, "flee", "퇴각 나팔", "주시 중인 전투창에서 도망칠 수 있다", 300, 1.0, 1, 3)
+
+func open_stable() -> void:
+	# v4.0 §B-2: 마구간 — 발과 반경, 그리고 탈것
+	_menu_kind = "stable"
+	var v := _menu_panel("마구간 — 여물 냄새와 말발굽 소리")
+	_up_row(v, "speed", "이속 강화", "파티 이동 속도 +8% (끝까지 가면 탈것이…)", 25, 1.2, 9, 0)
 	_up_row(v, "intuition", "용사의 직감", "파티가 스스로 사냥하고 돌아온다", 800, 1.0, 1, 5)
 	if Game.up["intuition"] > 0:
 		_up_row(v, "radius", "행동반경", "직감 사냥 반경 +80", 200, 2.0, 3, 0)
-	# v3.1 — 지휘 계열
-	_up_row(v, "flee", "퇴각 나팔", "주시 중인 전투창에서 도망칠 수 있다", 300, 1.0, 1, 3)
-	if Game.up["intuition"] > 0:
-		_up_row(v, "telepathy", "상인의 텔레파시", "멀리서도 건물 메뉴를 열 수 있다 (몸 행위는 불가)", 500, 1.0, 1, 0)
+	if Game.mounted():
+		v.add_child(UILib.make_label("탈것 완비 — 대열 전체가 신나게 달린다!", UILib.FS, UILib.COL_GOLD))
+
+func _can_up(id: String, base: int, growth: float, max_lv: int, lv_gate: int) -> bool:
+	# _up_row와 같은 산식 — 마커 폴링용 "지금 살 수 있나"
+	var lv: int = Game.up[id]
+	if lv >= max_lv or Game.level < lv_gate:
+		return false
+	return Game.gold >= Game.price(int(base * pow(growth, lv)))
+
+func can_shop(kind: String) -> bool:
+	# v4.0 §B-1: 건물별 "지금 실행 가능한 일" 판정 — main의 마커 폴링이 부른다
+	match kind:
+		"chief":
+			for e in main.BUILD_CATALOG:
+				if not main.catalog_built(e) and main.catalog_unlocked(e) and Game.gold >= int(e["cost"]):
+					return true
+			if Game.extra_pots < 3 and Game.gold >= int(30 * pow(2.2, Game.extra_pots)):
+				return true
+			for r in main.candidate_residents():
+				var c: Dictionary = r["cond"]
+				if c.has("gold") and (not c.has("lv") or Game.level >= int(c["lv"])) \
+						and Game.gold >= int(c["gold"]):
+					return true
+			return false
+		"inn":
+			return _can_up("max_hp", 30, 1.2, 9, 0)
+		"church":
+			if Game.ghost_count() > 0 and Game.gold >= Game.revive_cost():
+				return true
+			return _can_up("gaze", 120, 1.6, 5, 0) or _can_up("stack", 400, 1.0, 1, 0) \
+				or _can_up("heal_eye", 150, 1.8, 4, 0) or _can_up("golden_hands", 200, 1.0, 1, 0) \
+				or _can_up("linger", 260, 1.0, 1, 0) or _can_up("requiem", 500, 1.0, 1, 0)
+		"shop":
+			if _can_up("gold_mult", 60, 1.25, 9, 0) or _can_up("shovel", 150, 1.0, 1, 0):
+				return true
+			if Game.up["shovel"] > 0 and _can_up("pickaxe", 300, 2.0, 3, 0):
+				return true
+			if Game.clock_on() and _can_up("lantern", 120, 1.9, 3, 0):
+				return true
+			return Game.up["intuition"] > 0 and _can_up("telepathy", 500, 1.0, 1, 0)
+		"train":
+			return _can_up("win_cap", 100, 2.2, 5, 2 + Game.up["win_cap"] * 2) \
+				or _can_up("battle_speed", 25, 1.22, 12, 0) \
+				or _can_up("density", 160, 1.0, 1, 4) or _can_up("flee", 300, 1.0, 1, 3)
+		"stable":
+			if _can_up("speed", 25, 1.2, 9, 0) or _can_up("intuition", 800, 1.0, 1, 5):
+				return true
+			return Game.up["intuition"] > 0 and _can_up("radius", 200, 2.0, 3, 0)
+		"bank":
+			return _can_up("bank_cap", 400, 2.4, 5, 0) or _can_up("bank_rate", 500, 2.2, 4, 0)
+		"smith":
+			# 대장간 불 — 화덕이 달아올랐을 때 (§B-1)
+			var sm = main.base_nodes.get("smith")
+			return sm != null and is_instance_valid(sm) and sm.is_ready
+		"weaponshop":
+			for i in Game.members.size():
+				if Game.gold >= Game.weapon_cost(i):
+					return true
+			return false
+		"board":
+			return _can_up("track", 350, 2.0, 2, 0)
+	return false
 
 func _up_row(v: VBoxContainer, id: String, name_txt: String, desc: String, base: int, growth: float, max_lv: int, lv_gate: int) -> void:
 	var lv: int = Game.up[id]
@@ -850,6 +987,9 @@ func _buy_up(id: String, cost: int, reopen: String) -> void:
 		"shop": open_shop_menu()
 		"church": open_church()
 		"bank": open_bank()
+		"train": open_training()
+		"stable": open_stable()
+		"board": open_board()
 		_: open_chief()
 
 func _chief_pay(id: String) -> void:
@@ -898,7 +1038,29 @@ func open_inn() -> void:
 	if Game.companion_count() > 1:
 		_menu_row(v, "파티 편성 (%d/%d)" % [Game.party_ids.size(), Game.PARTY_MAX],
 			"누구와 걸을지 정한다. 편성이 곧 전략이다", "열기", true, open_formation)
-	_menu_row(v, "《동료들의 서》", "만난 동료들의 기록 — 회차를 넘어 남는다", "펼치기", true, open_book)
+	_menu_row(v, "《동료들의 서》", "만난 동료와 주민의 기록 — 회차를 넘어 남는다", "펼치기", true, open_book)
+	# 오의 슬롯 (v3.9 §B-3 — FF6 마석 문법: 장착 자유, 편성 조건 없음)
+	if not Game.arts_owned.is_empty():
+		v.add_child(UILib.make_label("— 오의 (슬롯 1개) —", UILib.FS, UILib.COL_GOLD))
+		for cd in Game.COMBO_DEFS:
+			var aid: String = cd["id"]
+			if not Game.arts_owned.has(aid):
+				continue
+			var on: bool = Game.equipped_art == aid
+			var badge := "[NEW] " if Game.is_new("art_" + aid) else ""
+			_menu_row(v, badge + ("▶ " if on else "・ ") + String(cd["name"]),
+				"승리로 게이지를 채워 클릭 발동 — 필드 전체를 휩쓴다",
+				"장착 중" if on else "장착", not on,
+				func():
+					Game.equipped_art = aid
+					Game.combo_gauge = 0.0
+					Game.clear_new(["art_" + aid])
+					Sfx.play("buy")
+					Game.save_game()
+					open_inn())
+	# 여관 업글 — 요리사의 한 끼 (v3.9 이관)
+	if Game.buildings["church"]:
+		_up_row(v, "meal", "요리사의 한 끼", "성수가 훨씬 잘 차오른다", 220, 1.0, 1, 0)
 
 func open_formation() -> void:
 	_menu_kind = "formation"
@@ -916,12 +1078,8 @@ func open_formation() -> void:
 				"빼기" if in_party else "넣기",
 				in_party or Game.party_ids.size() < Game.PARTY_MAX,
 				func(): _formation_toggle(id))
-	var combo: Dictionary = Game.active_combo()
-	if not combo.is_empty():
-		var hint_txt := "…이 편성, 뭔가 통하는 게 있다."
-		if Game.combo_hint_known:
-			hint_txt += " (%s)" % String(combo["name"])
-		v.add_child(UILib.make_label(hint_txt, UILib.FS, UILib.COL_GOLD))
+	if Game.combo_hint_known and Game.arts_owned.size() < Game.COMBO_DEFS.size():
+		v.add_child(UILib.make_label("어딘가에 아직 못 찾은 오의서가 있다…", UILib.FS, UILib.COL_GRAY))
 
 func _formation_toggle(id: String) -> void:
 	if Game.toggle_party(id):
@@ -933,15 +1091,22 @@ func _formation_toggle(id: String) -> void:
 		event("자리가 없다! (최대 %d명)" % Game.PARTY_MAX)
 
 func open_book() -> void:
+	# v3.9: 동료 8 + 주민 전원 수록 도감
 	_menu_kind = "book"
-	var v := _menu_panel("《동료들의 서》 — %d/%d" % [Game.book_seen.size(), Game.COMPANIONS.size()])
+	var v := _menu_panel("《동료들의 서》")
+	v.add_child(UILib.make_label("— 동료 (파티 편성 가능) —", UILib.FS, UILib.COL_GOLD))
 	for id in Game.COMPANIONS.keys():
 		var d: Dictionary = Game.COMPANIONS[id]
-		if Game.book_seen.get(id, false):
-			var tag: String = "정규" if d["regular"] else "객원"
-			_menu_row(v, "%s (%s)" % [d["name"], tag], String(d["pdesc"]), "기록됨", false, func(): pass)
+		if Game.companions_owned.get(id, false) or Game.book_seen.get(id, false):
+			_menu_row(v, String(d["name"]), String(d["pdesc"]), "기록됨", false, func(): pass)
 		else:
 			_menu_row(v, "？？？", String(d["hint"]), "—", false, func(): pass)
+	v.add_child(UILib.make_label("— 주민 (마을을 움직이는 사람들) —", UILib.FS, UILib.COL_GOLD))
+	for r in main.RESIDENTS:
+		if Game.residents.get(r["id"], false):
+			_menu_row(v, String(r["name"]), String(r["join"]), "정착", false, func(): pass)
+		else:
+			_menu_row(v, "？？？", String(r["ask"]), "—", false, func(): pass)
 
 func _tactic_row(v: VBoxContainer, id: String, name_txt: String, sub: String) -> void:
 	var on: bool = Game.tactic == id
@@ -987,6 +1152,8 @@ func open_church() -> void:
 	_up_row(v, "stack", "겹쳐보기", "전투창들이 겹쳐 정리되고, 스택 주시 = 전체 주시", 400, 1.0, 1, 0)  # v3.4 §B-1
 	_up_row(v, "heal_eye", "치유의 눈길", "파티창을 바라보면 성수가 상처를 씻는다", 150, 1.8, 4, 0)
 	_up_row(v, "golden_hands", "황금의 손길", "황금 슬라임을 문질러 붙잡을 수 있게 된다", 200, 1.0, 1, 0)
+	_up_row(v, "linger", "노래의 여운", "주시가 커서를 떼도 잠시 남는다", 260, 1.0, 1, 0)
+	_up_row(v, "requiem", "성불의 종", "유령 동료가 시간이 지나면 스스로 되살아난다", 500, 1.0, 1, 0)
 	if Game.up["heal_eye"] > 0 or Game.up["golden_hands"] > 0:
 		_up_row(v, "holy_max", "성수 그릇", "성수 최대치 +4초", 100, 1.7, 4, 0)
 		_up_row(v, "holy_regen", "샘의 축복", "성수가 차오르는 속도 +35%", 130, 1.7, 4, 0)
@@ -1011,6 +1178,14 @@ func open_shop_menu() -> void:
 	_menu_kind = "shop"
 	var v := _menu_panel("상점 — \"좋은 물건 있습니다\"")
 	_up_row(v, "gold_mult", "골드 감각", "골드 획득 +15%", 60, 1.25, 9, 0)
+	v.add_child(UILib.make_label("— 도구 —", UILib.FS, UILib.COL_GOLD))
+	_up_row(v, "shovel", "삽", "반짝이는 땅을 판다", 150, 1.0, 1, 0)
+	if Game.up["shovel"] > 0:
+		_up_row(v, "pickaxe", "곡괭이", "발굴 보상과 메달 확률 상승", 300, 2.0, 3, 0)
+	if Game.clock_on():
+		_up_row(v, "lantern", "등불", "밤 시야 반경 확장 (최종: 대열 전체가 빛의 뱀)", 120, 1.9, 3, 0)
+	if Game.up["intuition"] > 0:
+		_up_row(v, "telepathy", "상인의 텔레파시", "멀리서도 건물 메뉴를 열 수 있다 (몸 행위는 불가)", 500, 1.0, 1, 0)
 	v.add_child(UILib.make_label("— 조수 동물 —", UILib.FS, UILib.COL_GOLD))
 	_assist_row(v, "monkey", "원숭이", "마을 항아리를 자동으로 깬다", 600, 2.5, 3)
 	_assist_row(v, "keeper", "상자지기", "보물상자를 자동으로 연다", 900, 1.0, 1)
@@ -1173,6 +1348,7 @@ func _apply_forge(i: int, result: int) -> void:
 	Game.companion_forge[cls] = int(Game.companion_forge.get(cls, 0)) + result
 	var pct: int = int(Game.companion_forge[cls]) * 3
 	if result >= 3:
+		Sfx.play("forge3")
 		Sfx.play("fanfare_big")
 		event("회심의 필살작!! 벼림 +%d%% (공격력 %d)" % [pct, Game.member_atk(i)], 3.5)
 		Game.smith_perfects += 1
@@ -1180,10 +1356,10 @@ func _apply_forge(i: int, result: int) -> void:
 			event("훈장 「모루의 축복」 을 손에 넣었다!", 4.0)
 			_update_top()
 	elif result == 2:
-		Sfx.play("buy")
+		Sfx.play("forge2")
 		event("좋은 벼림이다. +%d%% (공격력 %d)" % [pct, Game.member_atk(i)], 2.5)
 	else:
-		Sfx.play("bump")
+		Sfx.play("forge1")
 		event("…뭐, 쓸 만하다. +%d%% (공격력 %d)" % [pct, Game.member_atk(i)], 2.5)
 	if main != null:
 		main.on_forged()
@@ -1224,6 +1400,7 @@ func open_board(tab: int = -1) -> void:
 			"파견 완료" if bought else "%d G" % cost,
 			is_next and Game.gold >= cost,
 			func(): _buy_poster(field, i, cost))
+	_up_row(v, "track", "정찰 보고", "수배된 몬스터·지배자에게 주는 데미지 상승", 350, 2.0, 2, 0)
 	var g_cost := int(200 * Game.gold_scale())
 	_menu_row(v, "황금 슬라임 목격 정보", "황금 슬라임이 더 자주 나타난다",
 		"입수 완료" if Game.golden_info else "%d G" % g_cost,
@@ -1270,6 +1447,8 @@ func open_status(i: int) -> void:
 	v.add_child(UILib.make_label("무기: %s" % Game.weapon_name(i), UILib.FS))
 	var pdesc: String = Game.COMPANIONS[m["cls"]]["pdesc"]
 	v.add_child(UILib.make_label("패시브: %s" % pdesc.split(" — ")[0], UILib.FS, UILib.COL_GRAY))
+	if Game.equipped_art != "":
+		v.add_child(UILib.make_label("오의: %s" % Game.art_def(Game.equipped_art).get("name", ""), UILib.FS, UILib.COL_GOLD))
 	# v3.6: 개별 작전 — 이 동료에게만 내리는 지시 (전체 작전보다 우선)
 	if Game.tactic_known:
 		var g_name: String = Game.TACTIC_NAMES.get(Game.tactic, "따로 없음")
@@ -1315,8 +1494,8 @@ func _update_combo_bar() -> void:
 		_combo_cell.visible = active
 	if active and _combo_fill != null and is_instance_valid(_combo_fill):
 		var g: float = clampf(Game.combo_gauge, 0.0, 1.0)
-		_combo_fill.size = Vector2(74.0 * g, 5)
-		_combo_fill.position = Vector2.ZERO
+		_combo_fill.size = Vector2(5, 20.0 * g)
+		_combo_fill.position = Vector2(0, 20.0 - _combo_fill.size.y)
 		if g >= 1.0:
 			_combo_fill.color = UILib.COL_GOLD if sin(Time.get_ticks_msec() / 120.0) > 0.0 else UILib.COL_WHITE
 			if not _combo_full_told:
@@ -1356,7 +1535,7 @@ func _update_combo_btn() -> void:
 		# 파티창 위에 떠서 두근두근 — 크기 맥동 + 무지개빛 금색
 		var t := Time.get_ticks_msec() / 1000.0
 		_combo_btn.reset_size()
-		_combo_btn.position = Vector2(_party_bar.position.x - _combo_btn.size.x - 6.0, _party_bar.position.y)
+		_combo_btn.position = Vector2(CARD_X0, CARD_Y + CARD_H + 6.0)
 		_combo_btn.pivot_offset = _combo_btn.size / 2.0
 		_combo_btn.scale = Vector2.ONE * (1.0 + 0.07 * sin(t * 6.0))
 		_combo_btn.modulate = Color(
@@ -1430,10 +1609,9 @@ func _opt_slider_row(v: VBoxContainer, key: String, name_txt: String) -> void:
 func _opt_vol(key: String, dir: int) -> void:
 	Game.opt[key] = clampi(int(Game.opt[key]) + dir, 0, 10)
 	Game.save_options()
+	Sfx.apply_volumes()
 	if key == "sfx":
 		Sfx.play("click")
-	else:
-		Sfx.refresh_bgm_volume()
 	# 열려 있던 맥락 유지 재오픈
 	var in_game: bool = main == null or not main._title_mode
 	open_options(in_game)
@@ -1502,6 +1680,7 @@ func _roll_symbol() -> String:
 func open_casino() -> void:
 	_menu_kind = "casino"
 	_spin_active = false
+	Music.set_casino(true)  # M3 크로스페이드 (오디오 명세 §1)
 	var v := _menu_panel("카지노 — \"인생 한 방\"")
 	var coins_l := UILib.make_label("보유 코인: %d닢" % Game.coins, UILib.FS, UILib.COL_GOLD)
 	v.add_child(coins_l)
@@ -1775,7 +1954,13 @@ func title_hide(on: bool) -> void:
 	# 타이틀 상태 — 마을만 보인다. HUD는 잠든다
 	_title_suppress = on
 	_top_panel.visible = Game.ui_unlocked["gold"] and not on
-	_party_bar.visible = Game.ui_unlocked["party"] and not on
+	for sn in _party_strip:
+		if is_instance_valid(sn):
+			sn.visible = Game.ui_unlocked["party"] and not on
+	if _holy_cell != null and is_instance_valid(_holy_cell):
+		_holy_cell.visible = Game.ui_unlocked["party"] and not on and Game.buildings["church"]
+	if _combo_cell != null and is_instance_valid(_combo_cell):
+		_combo_cell.visible = false  # _update_combo_bar가 매 프레임 재판정
 	_tooltip.visible = false
 	_event_box.visible = false
 	_event_q.clear()

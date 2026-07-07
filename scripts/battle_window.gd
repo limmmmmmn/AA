@@ -108,42 +108,31 @@ func _build_enemies() -> void:
 	_layout_enemies()
 
 func _layout_enemies() -> void:
-	# v3.4 §B-1: 몬스터 존 = 상단 2/3, 크게 (정수 배율)
+	# v3.9: 몬스터는 원본 1배수 고정 (스프라이트 원본 픽셀 그대로 — 확대 금지)
 	if _enemy_nodes.is_empty():
 		return
 	var log_h := size.y / 3.0
 	var area_h := size.y - log_h - 4.0
-	var target_h := area_h * 0.78
-	var s := 4
-	while s > 1:
-		var total_w := 0.0
-		var fits := true
-		for i in _enemy_tex_sizes.size():
-			var sc := clampi(int(target_h / _enemy_tex_sizes[i].y), 1, s)
-			total_w += _enemy_tex_sizes[i].x * sc + 5.0
-			if _enemy_tex_sizes[i].y * sc > area_h - 4.0:
-				fits = false
-		if fits and total_w - 5.0 <= size.x - 12.0:
-			break
-		s -= 1
-	var widths: Array = []
 	var total := 0.0
 	for i in _enemy_tex_sizes.size():
-		var sc := clampi(int(target_h / _enemy_tex_sizes[i].y), 1, s)
-		widths.append(_enemy_tex_sizes[i] * sc)
-		total += _enemy_tex_sizes[i].x * sc
+		total += _enemy_tex_sizes[i].x
 	total += 5.0 * (_enemy_nodes.size() - 1)
 	var x := (size.x - total) / 2.0
 	for i in _enemy_nodes.size():
 		var tr: TextureRect = _enemy_nodes[i]
 		if not is_instance_valid(tr):
 			continue
-		var sz: Vector2 = widths[i]
+		var sz: Vector2 = _enemy_tex_sizes[i]  # 1:1 원본
 		tr.size = sz
 		tr.pivot_offset = Vector2(sz.x / 2.0, sz.y)  # 발밑 기준 (바운스용)
 		tr.position = Vector2(x, 4.0 + (area_h - sz.y) / 2.0)
 		_enemy_base_pos[i] = tr.position
 		x += sz.x + 5.0
+
+func nudge_to(pos: Vector2) -> void:
+	# 밀어내기 결과 위치 확정 — 피격 흔들림 복귀 지점도 함께 갱신 (v3.9 §B-4)
+	position = pos
+	_base_position = pos
 
 func apply_dock(pos: Vector2, sz: Vector2) -> void:
 	# 창 수에 따른 반응형 도킹 — 위치는 트윈, 크기는 즉시 + 내부 재배치
@@ -407,8 +396,8 @@ func _on_mouse_entered() -> void:
 
 func _on_mouse_exited() -> void:
 	if sim != null:
-		if Game.passive_on("linger"):
-			_linger_t = 2.5  # 바드의 여운
+		if Game.up["linger"] > 0:
+			_linger_t = 2.5  # 노래의 여운 (축복 업글, v3.9)
 		else:
 			sim.hovered = false
 	Sfx.gaze_loop(false)
@@ -474,7 +463,7 @@ func _on_frogified() -> void:
 # ---------------------------------------------------------------- 황금 슬라임
 
 func _on_golden_spawned() -> void:
-	Sfx.play("golden", 0.8 if sim.golden_silver else 1.0)
+	Sfx.play("golden_silver" if sim.golden_silver else "golden")  # J4: 은빛 = 반음계 변형
 	_golden = TextureRect.new()
 	_golden.texture = load("res://assets/enemies/slime.png")
 	_golden.stretch_mode = TextureRect.STRETCH_SCALE

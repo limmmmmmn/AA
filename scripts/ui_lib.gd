@@ -35,7 +35,8 @@ static func family_color(fam: String) -> Color:
 ## 동료 직업색 (v3.8 §B-1)
 const CLASS_COLORS := {
 	"hero": "f5c542", "knight": "4fc4f7", "priest": "f7e08a",
-	"mage": "9b5de5", "thief": "3fb8af", "monkf": "ff9f2e", "warrior": "8ac926",
+	"mage": "9b5de5", "thief": "3fb8af", "monkf": "ff9f2e",
+	"warrior": "d95763", "druid": "8ac926",
 }
 
 # ---------------------------------------------------------------- 자동 채색 (v3.8 §B-1 — 수동 태그가 아니라 시스템)

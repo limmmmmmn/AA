@@ -41,13 +41,35 @@ func _run() -> void:
 	print("[dbg] res=", Game.residents, " inn=", Game.buildings["inn"], " quest=", Game.ui_unlocked["quest"], " kills=", Game.kill_counts)
 	assert(Game.residents.get("innkeep", false) and Game.buildings["inn"])
 	Game.add_exp(3000)  # 레벨 게이트 통과용 (Lv 7+)
-	assert(main.try_pay_resident("smithy"))
+	assert(main.buy_catalog("smith"))
 	await get_tree().create_timer(3.0).timeout
 	assert(Game.buildings["smith"])
-	assert(main.try_pay_resident("merchant"))
-	await get_tree().create_timer(4.0).timeout
+	assert(Game.residents.get("smithy", false))  # 건물이 서면 사람이 온다
+	assert(main.buy_catalog("shop"))
+	await get_tree().create_timer(3.0).timeout
 	assert(Game.resident_count() == 3)
-	print("[SMOKE] 주민 3명 영입 OK — 부흥 단계 %d" % main._revival_stage())
+	print("[SMOKE] 건설→입주 OK — 주민 %d명, 건설물 %d개, 부흥 %d" % [Game.resident_count(), Game.built_count(), main._revival_stage()])
+
+	# v4.0 — 훈련소/마구간/기물/"!" 마커
+	assert(main.buy_catalog("train"))
+	assert(main.buy_catalog("stable"))
+	await get_tree().create_timer(2.6).timeout
+	assert(Game.buildings["train"] and Game.buildings["stable"])
+	assert(Game.residents.get("trainer", false) and Game.residents.get("hostler", false))
+	assert(main.buy_catalog("scarecrow"))  # needs: train
+	var sc: Interactable = null
+	for scn in get_tree().get_nodes_in_group("hoverable"):
+		if scn is Interactable and scn.kind == "scarecrow":
+			sc = scn
+	assert(sc != null)
+	var g_before := Game.gold
+	main._bump_scarecrow(sc)
+	assert(Game.gold > g_before and not sc.is_ready)  # 잔돈 + 쿨타임
+	assert(main.hud.can_shop("chief"))  # 골드가 넘치니 촌장 위에 "!"가 켜져 있어야 한다
+	main._update_chief_alert()
+	assert(main.base_nodes["chief"].show_alert)
+	assert(main.hud.can_shop("train"))  # 훈련소에도 살 게 있다
+	print("[SMOKE] v4.0 건설 카탈로그/기물/마커 OK — 건설물 %d개" % Game.built_count())
 
 	# 3) 전투 + 황금 슬라임 (한 화면 — 필드는 오른쪽에 그대로 있다)
 	var mons: Array = []
@@ -136,7 +158,7 @@ func _run() -> void:
 			forge_idx = i
 	assert(forge_idx >= 0)
 	# 무기점 — 골드 → 즉시 플랫 (무기상 주민 영입 포함)
-	assert(main.try_pay_resident("weaponsmith"))
+	assert(main.buy_catalog("weaponshop"))
 	await get_tree().create_timer(3.0).timeout
 	assert(Game.buildings["weaponshop"])
 	var atk_before: int = Game.member_atk(forge_idx)
@@ -155,7 +177,7 @@ func _run() -> void:
 		int(Game.forge_mult("warrior") * 100)])
 
 	# 9) 도박사 영입 → 카지노 + 서사시
-	assert(main.try_pay_resident("gambler"))
+	assert(main.buy_catalog("casino"))
 	await get_tree().create_timer(3.0).timeout
 	assert(Game.buildings["casino"])
 	Game.coins += 600
@@ -185,20 +207,13 @@ func _run() -> void:
 	assert(Game.combo_hint_known)
 	print("[SMOKE] 서사시 사건 OK — 드루이드/검바위/힌트")
 
-	# 9.7) v3.4 — 편성 + 합체기 (참치 어택 = 고전 4인: 용사+사제+마법사+도적)
-	Game.own_companion("priest")
-	Game.own_companion("mage")
-	Game.companions_owned["thief"] = false  # 배신 상태 초기화 후 재영입
-	Game.thief_away = false
-	Game.own_companion("thief")
-	for id in Game.party_ids.duplicate():
-		if id != "hero" and Game.party_ids.size() > 1:
-			Game.toggle_party(id)
-	for id in ["priest", "mage", "thief"]:
-		if not Game.party_ids.has(id):
-			assert(Game.toggle_party(id))
+	# 9.7) v3.9 — 오의 장착식 (§B-3: 편성 조건 없음, 슬롯 1개)
+	assert(Game.active_combo().is_empty())      # 오의서 없으면 게이지도 없다
+	assert(Game.own_art("tuna"))
+	assert(Game.equipped_art == "tuna")          # 첫 오의서는 자동 장착
+	assert(not Game.own_art("tuna"))             # 중복 획득 방지
 	var combo: Dictionary = Game.active_combo()
-	assert(not combo.is_empty() and String(combo["id"]) == "tuna")  # 전설의 조합 …참치다
+	assert(not combo.is_empty() and String(combo["id"]) == "tuna")
 	Game.combo_gauge = 1.0
 	var mons3: Array = []
 	for m in get_tree().get_nodes_in_group("monster"):
@@ -257,16 +272,31 @@ func _run() -> void:
 	main.hud.close_menu()
 	print("[SMOKE] 축복/도망 OK")
 
-	# 9.9) v3.1 — 은행 (banker 부탁 → 건물 → 예금)
+	# 9.9) v3.9 — 은행원·어부 형제 = 주민 부탁 (§B-2)
 	Game.add_exp(200000)  # Lv 8 게이트
-	assert(main.try_pay_companion("banker"))
+	assert(main.buy_catalog("bank"))
 	await get_tree().create_timer(3.5).timeout
 	assert(Game.buildings["bank"])
-	assert(Game.companions_owned.get("banker", false))
+	assert(Game.residents.get("banker", false))
 	Game.add_gold(2000)
 	var dep := Game.bank_deposit(800)
 	assert(dep > 0 and Game.deposit == dep)
-	print("[SMOKE] 은행 OK — 예금 %d G" % Game.deposit)
+	assert(main.buy_catalog("frogstatue"))  # 기물 — 은행 뒤에 열린다
+	assert(main.try_pay_resident("fishers"))
+	await get_tree().create_timer(6.8).timeout
+	assert(Game.residents.get("fishers", false))
+	assert(Game.keys["sea"])  # 어부 부탁 완결 = 바다의 노래
+	# 개구리 저금통 누적 → 오의 「개구리의 왈츠」 (§B-3 은행 연동 개그)
+	Game.stats["frog_gold"] = 499
+	var fs2: Interactable = null
+	for n2 in get_tree().get_nodes_in_group("hoverable"):
+		if n2 is Interactable and n2.kind == "frogstatue":
+			fs2 = n2
+	assert(fs2 != null)
+	Game.add_gold(77 - Game.gold % 100)  # 잔돈 확보
+	main._bump_frogstatue(fs2)
+	assert(Game.arts_owned.has("frog"))
+	print("[SMOKE] 은행/어부/개구리 오의 OK — 예금 %d G" % Game.deposit)
 
 	# 10) 전멸 → 부활 (예금은 불가침) + 원혼의 함성 위로 지급 (v3.2)
 	var dep_before: int = Game.deposit
@@ -356,6 +386,7 @@ func _run() -> void:
 	main._on_boss_defeated(2)
 	await get_tree().create_timer(0.5).timeout
 	assert(Game.medals_owned.has("pack_hunter") and Game.medals_owned.has("duel_manner"))
+	assert(Game.arts_owned.has("skeleton"))  # v3.9: 동굴 지배자 = 오의서 「명계의 행진」
 	for n in get_tree().get_nodes_in_group("hoverable"):
 		if n is Interactable and n.kind == "rotoshield":
 			rsh = n
@@ -369,16 +400,23 @@ func _run() -> void:
 	assert(Game.weapon_name(0) == "전설의 검·진")
 	print("[SMOKE] 로토 3점 OK — %s" % Game.weapon_name(0))
 
-	# 15) v3.4 — 숨겨진 수중 필드 (바다의 노래 → 물고기화) + 스택 + 우물/집 + 칭호
-	Game.keys["sea"] = true  # 어부 부탁 완결의 열쇠
+	# 15) v3.9 — 숨겨진 수중 필드 (어부의 바다의 노래) + 최심부 오의서
+	assert(Game.keys["sea"])
 	main.swap_field(Game.HIDDEN_FIELD)
 	await get_tree().create_timer(1.2).timeout
 	assert(main.party.underwater)
+	# 최심부의 전설의 오의서 — 참치는 이미 주웠으니 스폰 안 된다 (중복 방지 확인)
+	var found_book := false
+	for nb in get_tree().get_nodes_in_group("hoverable"):
+		if nb is Interactable and nb.kind == "artbook":
+			found_book = true
+	assert(not found_book)
 	main.swap_field(0)
 	await get_tree().create_timer(1.2).timeout
 	assert(not main.party.underwater)
-	# 겹쳐보기 스택 — 창 3개 이상이면 카스케이드 + ×N 뱃지
+	# 겹쳐보기 = 소집 토글 (v3.9 §B-4) — 켜야 스택
 	Game.up["stack"] = 1
+	main.stack_on = true
 	Game.up["win_cap"] = 5  # 상한 여유 확보
 	for attempt in 12:
 		if main._docked_windows().size() >= 3:
@@ -397,6 +435,7 @@ func _run() -> void:
 	for w4 in main.windows.duplicate():
 		if is_instance_valid(w4) and not w4.is_boss:
 			w4.close_after(0.0)
+	main.stack_on = false
 	Game.up["stack"] = 0
 	await get_tree().create_timer(0.8).timeout
 	print("[SMOKE] 스택 겹쳐보기 OK")
@@ -506,10 +545,15 @@ func _shots() -> void:
 	Game.kill_counts["slime"] = 5
 	Game.add_exp(3000)
 	await get_tree().create_timer(4.5).timeout
-	main.try_pay_resident("smithy")
+	main.buy_catalog("smith")
 	await get_tree().create_timer(3.0).timeout
-	main.try_pay_resident("merchant")
+	main.buy_catalog("shop")
 	await get_tree().create_timer(4.5).timeout
+	# 파티 4인 — 카드 규격 확인용 (v4.0 §B-3)
+	for cid in ["knight", "priest", "mage"]:
+		Game.own_companion(cid)
+		if not Game.party_ids.has(cid):
+			Game.toggle_party(cid)
 	# 전투창 도배
 	Game.up["win_cap"] = 5
 	var mons: Array = []
@@ -523,6 +567,26 @@ func _shots() -> void:
 		main.windows[0].sim.spawn_golden(20.0)
 	await get_tree().create_timer(1.0).timeout
 	await _save_shot("shot_village3.png")  # 한 화면: 마을⅓ + 필드⅔ + 창
+	# 툴팁 — 세로 쪼개짐 회귀 방지 (main._process 정지 → _update_hover가 set_hover 안 지움)
+	for w in main.windows.duplicate():
+		if is_instance_valid(w) and not w.is_boss:
+			w.close_after(0.0)
+	await get_tree().create_timer(0.4).timeout
+	main.set_process(false)
+	var tl: Label = main.hud.get_node("%TooltipLabel")
+	main.hud.set_hover("게시판 — 위험한 것들을 훨훨 물 머금은 채로 굽어보고 있다.")
+	await get_tree().create_timer(0.2).timeout
+	assert(tl.get_line_count() == 1)  # 한 줄 가로 (세로 쪼개짐 회귀 시 여러 줄)
+	main.hud._tooltip.position = Vector2(120, 150)
+	await _save_shot("shot_tooltip.png")
+	main.hud.set_hover("게시판")
+	await get_tree().create_timer(0.2).timeout
+	assert(tl.get_line_count() == 1)
+	main.hud._tooltip.position = Vector2(120, 150)
+	await _save_shot("shot_tooltip_short.png")
+	main.hud.set_hover("")
+	main.set_process(true)
+	print("[SMOKE] 툴팁 가로 OK")
 	# 촌장 커맨드 메뉴
 	main.hud.open_chief()
 	await get_tree().create_timer(0.4).timeout

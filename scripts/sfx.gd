@@ -11,21 +11,63 @@ var _pool_idx := 0
 var _gaze_player: AudioStreamPlayer      # 주시 루프 (전용 채널)
 var _gaze_count := 0                     # 여러 창 겹침 대비 카운트
 
+## 징글 = BGM보다 +2~3dB (오디오 명세 §0). 버스: Master ─ BGM/Jingle/SFX/UI (§4)
+const JINGLE_NAMES := ["fanfare", "fanfare_v2", "fanfare_v3", "fanfare_v4", "fanfare_big",
+	"levelup", "golden", "golden_silver", "capture", "combo", "revive", "heal", "wipe",
+	"chest", "palette", "toast1", "toast2", "toast3", "pop", "warp", "boss"]
+const UI_NAMES := ["blip", "click", "buy", "deny", "bump", "bank", "coin"]
+
 func _ready() -> void:
+	_make_buses()
 	for i in POOL_SIZE:
 		var p := AudioStreamPlayer.new()
 		p.volume_db = -8.0
+		p.bus = "SFX"
 		add_child(p)
 		_pool.append(p)
+	# 팡파레 전용 풀 4기 — 폴리포니 상한 = 시그니처 사운드의 수학 (§3)
+	for i in 4:
+		var fp := AudioStreamPlayer.new()
+		fp.volume_db = -6.0
+		fp.bus = "Jingle"
+		add_child(fp)
+		_fanfare_pool.append(fp)
 	_gaze_player = AudioStreamPlayer.new()
 	_gaze_player.volume_db = -26.0
+	_gaze_player.bus = "SFX"
 	add_child(_gaze_player)
 	_bgm_player = AudioStreamPlayer.new()
-	_bgm_player.volume_db = -18.0
+	_bgm_player.volume_db = -6.0
+	_bgm_player.bus = "BGM"
 	add_child(_bgm_player)
 	_build_all()
+	apply_volumes()
 
 var _bgm_player: AudioStreamPlayer
+var _fanfare_pool: Array[AudioStreamPlayer] = []
+var _fanfare_idx := 0
+
+func _make_buses() -> void:
+	for bus_name in ["BGM", "Jingle", "SFX", "UI"]:
+		if AudioServer.get_bus_index(bus_name) < 0:
+			var idx := AudioServer.bus_count
+			AudioServer.add_bus(idx)
+			AudioServer.set_bus_name(idx, bus_name)
+			AudioServer.set_bus_send(idx, "Master")
+
+func apply_volumes() -> void:
+	# 옵션 슬라이더 2개 → BGM / (Jingle+SFX+UI) 매핑 (§4)
+	var g := get_node_or_null("/root/Game")
+	if g == null:
+		return
+	var bgm_db: float = g.opt_bgm_db()
+	var sfx_db: float = g.opt_sfx_db()
+	AudioServer.set_bus_volume_db(AudioServer.get_bus_index("BGM"), bgm_db + 6.0)
+	AudioServer.set_bus_mute(AudioServer.get_bus_index("BGM"), bgm_db <= -79.0)
+	for bus_name in ["Jingle", "SFX", "UI"]:
+		var bi := AudioServer.get_bus_index(bus_name)
+		AudioServer.set_bus_volume_db(bi, sfx_db + 8.0 + (2.0 if bus_name == "Jingle" else 0.0))
+		AudioServer.set_bus_mute(bi, sfx_db <= -79.0)
 
 func gaze_loop(on: bool) -> void:
 	# 주시 중 반짝이는 루프음 — 켜진 창이 하나라도 있으면 재생 (v3.1 §B-7-1)
@@ -37,42 +79,40 @@ func gaze_loop(on: bool) -> void:
 		_gaze_player.stop()
 
 func play(name: String, pitch: float = 1.0, vol_db: float = 0.0) -> void:
+	# J1 승리 팡파레 — 미세 변주 4벌 랜덤 + 전용 풀 4기(초과분은 자연 교체) (§3)
+	if name == "fanfare":
+		name = ["fanfare", "fanfare_v2", "fanfare_v3", "fanfare_v4"][randi() % 4]
+		if not _streams.has(name):
+			name = "fanfare"
+		var fp := _fanfare_pool[_fanfare_idx]
+		_fanfare_idx = (_fanfare_idx + 1) % _fanfare_pool.size()
+		fp.stop()
+		fp.stream = _streams[name]
+		fp.pitch_scale = pitch
+		fp.play()
+		return
 	if not _streams.has(name):
 		return
-	var base := -8.0
-	var g := get_node_or_null("/root/Game")
-	if g != null:
-		base = g.opt_sfx_db()
-		if base <= -79.0:
-			return  # 음소거
 	var p := _pool[_pool_idx]
 	_pool_idx = (_pool_idx + 1) % POOL_SIZE
 	p.stop()
 	p.stream = _streams[name]
 	p.pitch_scale = pitch
-	p.volume_db = base + vol_db
+	p.volume_db = -8.0 + vol_db
+	p.bus = "Jingle" if name in JINGLE_NAMES else ("UI" if name in UI_NAMES else "SFX")
 	p.play()
 
 func title_bgm(on: bool) -> void:
-	# 타이틀 BGM — 메인 테마의 새벽 어레인지 (v3.3 §B, 절차 합성 임시곡)
-	if on:
-		var g := get_node_or_null("/root/Game")
-		_bgm_player.volume_db = g.opt_bgm_db() if g != null else -18.0
-		if _bgm_player.volume_db <= -79.0:
-			_bgm_player.stop()
-			return
-		if not _bgm_player.playing:
-			_bgm_player.stream = _streams.get("title_theme")
-			_bgm_player.play()
-	else:
-		_bgm_player.stop()
+	# 하위 호환 — 이제 Music 오토로드가 BGM을 지휘한다 (오디오 명세 §1)
+	var mus := get_node_or_null("/root/Music")
+	if mus != null:
+		if on:
+			mus.play_title()
+		else:
+			mus.stop_title()
 
 func refresh_bgm_volume() -> void:
-	var g := get_node_or_null("/root/Game")
-	if g != null and _bgm_player.playing:
-		_bgm_player.volume_db = g.opt_bgm_db()
-		if _bgm_player.volume_db <= -79.0:
-			_bgm_player.stop()
+	apply_volumes()
 
 # ---------------------------------------------------------------- synthesis
 
@@ -165,16 +205,31 @@ func _build_all() -> void:
 	_streams["crit"] = _to_stream(_mix(_tone(300.0, 0.15, 0.4, "noise"), _tone(880.0, 0.12, 0.35, "saw", -2000.0)))
 	# 아군 피격 (퍽)
 	_streams["hurt"] = _to_stream(_tone(110.0, 0.12, 0.45, "square", -200.0))
-	# 승리 팡파레 (짧게 — 어긋나 겹치는 게 시그니처)
+	# J1 승리 팡파레 — C장조 상행 "빰빠밤~". 어느 시점에 겹쳐도 화음 (오디오 명세 §3)
+	# 미세 변주 4벌: 유니즌 뭉침 방지 → "합창" 질감
 	_streams["fanfare"] = _to_stream(_melody([[523.0, 0.09], [659.0, 0.09], [784.0, 0.09], [1047.0, 0.24]], "square", 0.4))
+	_streams["fanfare_v2"] = _to_stream(_melody([[659.0, 0.09], [784.0, 0.09], [1047.0, 0.09], [1319.0, 0.24]], "square", 0.34))
+	_streams["fanfare_v3"] = _to_stream(_melody([[523.0, 0.09], [659.0, 0.09], [784.0, 0.09], [1047.0, 0.24]], "tri", 0.5))
+	_streams["fanfare_v4"] = _to_stream(_mix(
+		_melody([[523.0, 0.09], [659.0, 0.09], [784.0, 0.09], [1047.0, 0.24]], "square", 0.3),
+		_melody([[392.0, 0.09], [523.0, 0.09], [659.0, 0.09], [784.0, 0.24]], "square", 0.2), 0.0))
+	# J7 획득 토스트음 3종 — 훈장/메달/기타 (음색만 다르게)
+	_streams["toast1"] = _to_stream(_melody([[784.0, 0.07], [1047.0, 0.16]], "square", 0.35))
+	_streams["toast2"] = _to_stream(_melody([[784.0, 0.07], [1047.0, 0.16]], "tri", 0.45))
+	_streams["toast3"] = _to_stream(_melody([[784.0, 0.07], [1047.0, 0.16]], "sine", 0.45))
+	# J12 대장간 타격 3종 — 판정별 음정 상승
+	_streams["forge1"] = _to_stream(_mix(_tone(392.0, 0.1, 0.35, "square"), _tone(300.0, 0.08, 0.3, "noise"), 0.0))
+	_streams["forge2"] = _to_stream(_mix(_tone(523.0, 0.1, 0.35, "square"), _tone(300.0, 0.08, 0.3, "noise"), 0.0))
+	_streams["forge3"] = _to_stream(_mix(_melody([[659.0, 0.07], [784.0, 0.12]], "square", 0.4), _tone(300.0, 0.08, 0.3, "noise"), 0.0))
 	# 대형 팡파레 (보스/영입)
 	_streams["fanfare_big"] = _to_stream(_melody([
 		[523.0, 0.1], [523.0, 0.1], [523.0, 0.1], [659.0, 0.28], [0.0, 0.03],
 		[587.0, 0.1], [659.0, 0.1], [784.0, 0.36]], "square", 0.42))
 	# 전투창 팝
 	_streams["window"] = _to_stream(_concat([_tone(392.0, 0.05, 0.35, "square"), _tone(523.0, 0.08, 0.35, "square")]))
-	# 황금 슬라임 등장 (샤랑~)
+	# J4 황금 슬라임 등장 (샤랑~) / 은빛 = 동일 프레이즈 반음계 변형
 	_streams["golden"] = _to_stream(_melody([[1568.0, 0.06], [1976.0, 0.06], [2637.0, 0.06], [3136.0, 0.18]], "tri", 0.4))
+	_streams["golden_silver"] = _to_stream(_melody([[1480.0, 0.06], [1865.0, 0.06], [2489.0, 0.06], [2960.0, 0.18]], "tri", 0.4))
 	# 물컹 (문지르기)
 	_streams["squish"] = _to_stream(_tone(340.0, 0.09, 0.5, "sine", -1600.0))
 	# 포획 성공
