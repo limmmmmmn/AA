@@ -7,7 +7,12 @@ var passive := false      # 배회 중 자연 범프 대상인가 (항아리/상
 var is_ready := true      # 쿨타임 오브젝트용
 var recruit_cls := ""     # kind == recruit
 var resident_name := ""   # kind == resident (시설의 화신 — 마을에 서 있는 사람)
-var show_alert := false   # 머리 위 "!" (촌장 — 할 말이 있다)
+var show_alert := false:  # 머리 위 "!" — v4.1: 독립 마커 노드가 그린다 (z-order 앞)
+	set(v):
+		show_alert = v
+		if _alert_node != null and is_instance_valid(_alert_node):
+			_alert_node.visible = v
+var _alert_node: AlertMarker = null
 
 var _sprite: Sprite2D = null
 var _cd := 0.0
@@ -86,6 +91,9 @@ func _ready() -> void:
 		"medalking":
 			_make_sprite("chief", Rect2())
 			_sprite.self_modulate = Color(1.0, 0.85, 0.4)  # 금빛 — 메달왕
+		"guide":
+			_make_sprite("chief", Rect2())
+			_sprite.self_modulate = Color(0.6, 0.95, 1.0)  # 하늘빛 — 튜토리얼 안내원 (v4.1)
 		"recruit":
 			passive = false
 			var d: Dictionary = Game.CLASS_DEFS[recruit_cls]
@@ -100,10 +108,13 @@ func _ready() -> void:
 			pass  # _draw로 그린다
 		"lamppost", "scarecrow":
 			pass  # _draw로 그린다 (v4.0 기물)
-	if kind == "scarecrow":
-		passive = true
 	if kind == "sparkle":
 		passive = true
+	# v4.1: "!" 마커 = 독립 노드 (높은 z_index로 이웃 건물보다 항상 앞)
+	_alert_node = AlertMarker.new()
+	_alert_node.top_y = _alert_y()
+	_alert_node.visible = show_alert
+	add_child(_alert_node)
 
 func _make_sprite(tex_key: String, region: Rect2) -> void:
 	_sprite = Sprite2D.new()
@@ -124,8 +135,6 @@ func _process(delta: float) -> void:
 			_set_ready(true)
 	if kind in ["sparkle", "board", "casino", "bard", "smith", "exit", "gate", "chief", "signpost", "warehouse", "redchest", "fountain", "medalking", "bank", "frogstatue", "swordrock", "home", "well", "rotoshield", "lamppost", "scarecrow"]:
 		queue_redraw()
-	elif show_alert:
-		queue_redraw()  # v4.0 §B-1: 스프라이트형 건물도 "!"는 그린다
 	if kind == "recruit":
 		_sprite.position.y = -absf(sin(_t * 3.0)) * 2.0
 		queue_redraw()
@@ -133,8 +142,6 @@ func _process(delta: float) -> void:
 		_sprite.position.y = -absf(sin(_t * 2.0 + position.x)) * 1.0
 
 func _draw() -> void:
-	if show_alert:
-		_draw_alert()
 	match kind:
 		"sparkle":
 			var a := 0.55 + 0.45 * sin(_t * 5.0)
@@ -324,13 +331,6 @@ func _alert_y() -> float:
 		return -float(_sprite.texture.get_height()) - 8.0
 	return -30.0
 
-func _draw_alert() -> void:
-	# v4.0 §B-1: 공용 "!" 마커 — 금색, 통통 튀는 2프레임 느낌 (전 오브젝트 1종 통일)
-	var ca := 0.7 + 0.3 * sin(_t * 4.0)
-	var cy := _alert_y() - (2.0 if fmod(_t, 0.5) < 0.25 else 0.0)
-	draw_rect(Rect2(-2, cy, 4, 8), Color(1.0, 0.83, 0.29, ca), true)
-	draw_rect(Rect2(-2, cy + 10, 4, 3), Color(1.0, 0.83, 0.29, ca), true)
-
 func start_cooldown(seconds: float) -> void:
 	_cd = seconds
 	_cd_total = seconds
@@ -378,6 +378,7 @@ func hover_name() -> String:
 		"stable": return "마구간"
 		"lamppost": return "가로등"
 		"scarecrow": return "허수아비"
+		"guide": return "마을 안내원"
 		"chief": return "촌장"
 		"castle": return "마왕성"
 		"sparkle": return "반짝이는 땅"
@@ -474,7 +475,9 @@ func flavor() -> String:
 		"lamppost":
 			return "가로등이다. 밤을 기다리고 있다." if not (Game.clock_on() and Game.is_night()) else "가로등이 마을을 밝히고 있다."
 		"scarecrow":
-			return "허수아비다. 두드리면 잔돈이 떨어진다. (Space)" if is_ready else "허수아비가 휘청거리고 있다…"
+			return "허수아비다. 두드리면 몸이 달아오른다. (Space)" if is_ready else "허수아비를 방금 두드렸다."
+		"guide":
+			return "마을 안내원이다. 궁금한 걸 물어보자. (Space)"
 		"rotoshield":
 			return "전설의 방패가 빛나고 있다…! (Space)"
 		"swordrock":
@@ -511,6 +514,7 @@ func pick_radius() -> float:
 		"bank": return 22.0
 		"train", "stable": return 24.0
 		"lamppost": return 10.0
+		"guide": return 16.0
 		"scarecrow": return 12.0
 		"weaponshop": return 26.0
 		"frogstatue": return 12.0

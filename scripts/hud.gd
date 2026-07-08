@@ -69,6 +69,13 @@ var menu_hover := ""   # 메뉴 항목 호버 시 툴팁에 흘릴 텍스트
 var _event_q: Array = []
 var _event_showing := false
 var _ambient_t := 45.0
+# v4.2: 이벤트 박스 타자기 + 즉시 전환 상태 머신
+var _event_state := "idle"    # idle / typing / holding / fading
+var _event_total := 0         # 현재 대사의 총 글자 수
+var _event_shown := 0.0       # 드러난 글자 수 (float 누적)
+var _event_hold := 0.0        # 다 친 뒤 유지 시간
+var _event_blip_t := 0.0      # blip 효과음 간격
+var _event_tween: Tween = null
 
 # v3.1
 var remote_open := false           # 상인의 텔레파시로 연 메뉴 — 몸 행위 행은 잠긴다
@@ -119,8 +126,9 @@ func _process(delta: float) -> void:
 			_ambient_t = randf_range(200.0, 330.0)
 			var pair: Array = AMBIENT_PAIRS[randi() % AMBIENT_PAIRS.size()]
 			event("%s  [whisper]%s[/whisper]" % [pair[0], pair[1]], 4.0)
-	# 이벤트 박스 큐 소화
-	if not _event_showing and not _event_q.is_empty():
+	# 이벤트 박스 — 타자기 상태 머신 (v4.2)
+	_tick_event(delta)
+	if _event_state == "idle" and not _event_q.is_empty():
 		_show_next_event()
 	# 메뉴 스크롤 높이 — 내용에 맞추되 화면을 넘지 않게
 	if _menu_sc != null and is_instance_valid(_menu_sc) and _menu_v != null and is_instance_valid(_menu_v):
@@ -154,10 +162,37 @@ func _process(delta: float) -> void:
 		if _holy_bar != null and is_instance_valid(_holy_bar):
 			_holy_bar.size = Vector2(42.0 * clampf(Game.holy / maxf(1.0, Game.holy_max()), 0.0, 1.0), 3)
 			_holy_bar.color = Color(0.9, 0.95, 1.0) if healing else Color(0.55, 0.8, 1.0)
+	# v4.1: HP 숫자 떨림 + 위험 점멸
+	_tick_hp_fx(delta)
 	# 합체기 게이지 — 조합 성립 시 상시 표시 (v3.4)
 	_update_combo_bar()
 
 var _heal_accum := 0.0
+
+func _tick_hp_fx(delta: float) -> void:
+	# HP 숫자 연출: 피격 떨림 + 위험(≤25%) 시 빨강 점멸 (v4.1)
+	for i in _member_boxes.size():
+		if i >= Game.members.size():
+			continue
+		var b: Dictionary = _member_boxes[i]
+		if not b.has("hp") or not is_instance_valid(b["hp"]):
+			continue
+		var m: Dictionary = Game.members[i]
+		var base: Vector2 = b["hp_base"]
+		var sh: float = float(b.get("shake", 0.0))
+		if sh > 0.0:
+			sh = maxf(0.0, sh - delta)
+			b["shake"] = sh
+			b["hp"].position = base + Vector2(randf_range(-1.5, 1.5), randf_range(-1.5, 1.5)) * (sh / 0.32)
+		else:
+			b["hp"].position = base
+		var ratio: float = float(m["hp"]) / maxf(1.0, float(m["max_hp"]))
+		if not m["ghost"] and ratio <= 0.25 and m["hp"] > 0:
+			# 위험 — 빨강 점멸
+			var pulse := 0.55 + 0.45 * sin(Time.get_ticks_msec() / 90.0)
+			b["hp"].modulate = Color(1, 1, 1, pulse)
+		else:
+			b["hp"].modulate = Color(1, 1, 1, 1)
 
 # ---------------------------------------------------------------- UI 공개 스케줄 (게임이 자라는 게임)
 
@@ -250,10 +285,18 @@ func set_hover(text: String) -> void:
 # ---------------------------------------------------------------- 이벤트 박스 (v3.7 §E — "선언". 놓치는 게 불가능해야 한다)
 
 func event(text: String, dur: float = 2.5, portrait: String = "") -> void:
-	# 동시 1개 + 큐. 큐가 밀리면 오래된 것부터 버린다 (선언의 신선도)
+	# v4.2: 말 걸다 다른 대상에 말 걸면 즉시 교체 — 대기 없이 바로 새 대사
 	_event_q.append({"text": text, "dur": maxf(dur, 1.6), "portrait": portrait})
 	while _event_q.size() > 5:
 		_event_q.pop_front()
+	if _event_state != "idle":
+		# 지금 떠 있는 걸 끊고 방금 것을 바로 (큐 최신 우선)
+		if _event_tween != null and _event_tween.is_valid():
+			_event_tween.kill()
+		_event_box.modulate.a = 1.0
+		_event_state = "idle"
+		_event_showing = false
+		_show_next_event()
 
 func _show_next_event() -> void:
 	if _event_q.is_empty() or _title_suppress:
@@ -265,26 +308,63 @@ func _show_next_event() -> void:
 	if Game.current_field == Game.HIDDEN_FIELD and not text.begins_with("["):
 		text = "[wave amp=6 freq=4]%s[/wave]" % text
 	_event_label.text = text
-	# 초상화 슬롯 (촌장·엄마 얼굴 도트 — 임시: 스프라이트 프레임 컷)
 	var tex := _portrait_tex(String(e["portrait"]))
 	_event_portrait.texture = tex
 	_event_portrait.visible = tex != null
 	_event_box.visible = true
+	_event_box.modulate.a = 1.0
 	_event_box.reset_size()
 	# 최하단 8px 고정 — 부유 금지 (v3.8 §B-2)
 	_event_box.position = Vector2(320.0 - _event_box.size.x / 2.0, 352.0 - _event_box.size.y)
 	_event_box.pivot_offset = Vector2(_event_box.size.x / 2.0, _event_box.size.y)
 	_event_box.scale = Vector2(1.0, 0.3)
-	Sfx.play("window", 0.8)  # 등장 사운드 필수 — 놓치는 게 불가능해야 한다
-	var dur: float = e["dur"] * (0.55 if not _event_q.is_empty() else 1.0)  # 밀리면 빠르게
-	var tw := create_tween()
-	tw.tween_property(_event_box, "scale", Vector2.ONE, 0.12).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-	tw.tween_interval(dur)
-	tw.tween_property(_event_box, "modulate:a", 0.0, 0.25)
-	tw.tween_callback(func():
-		_event_box.visible = false
-		_event_box.modulate.a = 1.0
-		_event_showing = false)
+	Sfx.play("window", 0.8)  # 등장 사운드
+	# v4.2: 타자기 시작 — 글자가 타라라라 드러난다
+	_event_total = _event_label.get_total_character_count()
+	_event_shown = 0.0
+	_event_label.visible_characters = 0
+	_event_blip_t = 0.0
+	_event_hold = e["dur"] * (0.55 if not _event_q.is_empty() else 1.0)
+	_event_state = "typing"
+	if _event_tween != null and _event_tween.is_valid():
+		_event_tween.kill()
+	_event_tween = create_tween()
+	_event_tween.tween_property(_event_box, "scale", Vector2.ONE, 0.12).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+func _tick_event(delta: float) -> void:
+	# v4.2 이벤트 박스 상태 머신: 타자기 → 유지 → 페이드
+	match _event_state:
+		"typing":
+			# 텍스트 속도 옵션 반영 (0=순간)
+			var mult: float = Game.opt_type_mult() if Game.has_method("opt_type_mult") else 1.0
+			if mult <= 0.0:
+				_event_shown = _event_total
+			else:
+				_event_shown += delta * 46.0 / maxf(0.4, mult)
+			var vc: int = int(_event_shown)
+			if vc >= _event_total:
+				_event_label.visible_characters = -1
+				_event_state = "holding"
+			else:
+				_event_label.visible_characters = vc
+				# 글자 진행마다 blip (드퀘식 타라라라)
+				_event_blip_t -= delta
+				if _event_blip_t <= 0.0:
+					_event_blip_t = 0.032
+					Sfx.play("blip", randf_range(0.96, 1.06), -6.0)
+		"holding":
+			_event_hold -= delta
+			if _event_hold <= 0.0:
+				_event_state = "fading"
+				if _event_tween != null and _event_tween.is_valid():
+					_event_tween.kill()
+				_event_tween = create_tween()
+				_event_tween.tween_property(_event_box, "modulate:a", 0.0, 0.25)
+				_event_tween.tween_callback(func():
+					_event_box.visible = false
+					_event_box.modulate.a = 1.0
+					_event_showing = false
+					_event_state = "idle")
 
 func _portrait_tex(id: String) -> Texture2D:
 	if id == "":
@@ -371,7 +451,13 @@ func _rebuild_members() -> void:
 		bar.size = Vector2(CARD_W - 12.0, 3)
 		bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		bbg.add_child(bar)
-		_member_boxes.append({"panel": card, "name": nm, "bar": bar})
+		# v4.1: HP 숫자 회귀 (19/40) — 이름 우측, 한 줄. 색·떨림으로 연출 (옛 게임식)
+		var hpn := UILib.make_label("", UILib.FS, UILib.COL_GREEN)
+		hpn.position = Vector2(44, 2)
+		hpn.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		inner.add_child(hpn)
+		_member_boxes.append({"panel": card, "name": nm, "bar": bar, "hp": hpn,
+			"hp_base": Vector2(44, 2), "shake": 0.0, "last_hp": -1})
 		_update_member(i)
 	# 게이지 2종 — 카드 열 우측 끝, 동일 높이 소형 박스 (§B-3)
 	_combo_cell = _strip_box(Vector2(GAUGE_X, CARD_Y), Vector2(14, CARD_H))
@@ -436,8 +522,18 @@ func _update_member(i: int) -> void:
 	b["name"].add_theme_color_override("font_color", UILib.COL_GRAY if ghost else UILib.COL_WHITE)
 	var ratio: float = float(m["hp"]) / maxf(1.0, float(m["max_hp"]))
 	b["bar"].size = Vector2((CARD_W - 12.0) * ratio, 3)
-	b["bar"].color = UILib.COL_GRAY if ghost else (UILib.COL_GREEN if ratio > 0.35 else UILib.COL_RED)
-	# 유령 칸 = 반투명 + 청색 (§D). 숫자는 툴팁으로 (넘버는 원할 때만)
+	var hp_col: Color = UILib.COL_GRAY if ghost else (UILib.COL_GREEN if ratio > 0.5 \
+		else (UILib.COL_GOLD if ratio > 0.25 else UILib.COL_RED))
+	b["bar"].color = hp_col
+	# v4.1: HP 숫자 (19/40) + 비율별 색. 데미지 받으면 떨림 트리거
+	if b.has("hp") and is_instance_valid(b["hp"]):
+		b["hp"].text = "%d/%d" % [m["hp"], m["max_hp"]]
+		b["hp"].add_theme_color_override("font_color", hp_col)
+		var prev: int = int(b.get("last_hp", -1))
+		if prev >= 0 and m["hp"] < prev and not ghost:
+			b["shake"] = 0.32   # 감소 → 떨림
+		b["last_hp"] = m["hp"]
+	# 유령 칸 = 반투명 + 청색 (§D)
 	b["panel"].modulate = Color(0.7, 0.8, 1.25, 0.55) if ghost else Color(1, 1, 1, 1)
 	b["panel"].tooltip_text = "HP %d / %d" % [m["hp"], m["max_hp"]]
 
@@ -771,6 +867,8 @@ func _menu_panel(title: String) -> VBoxContainer:
 	close_menu()
 	_menu_kind = kind
 	remote_open = remote
+	if kind in ["chief", "inn", "church", "shop", "train", "stable", "bank", "weaponshop", "board", "smith"]:
+		_ack_shop(kind)  # v4.1: 방문 = 확인 → 마커 끔
 	# v3.4 §B-2: 커맨드 창 = 화면 좌측 고정 슬롯 1개, 동시 개방 1개
 	var p := UILib.make_panel(UILib.COL_GOLD)
 	p.position = Vector2(8, 26)
@@ -910,6 +1008,83 @@ func _can_up(id: String, base: int, growth: float, max_lv: int, lv_gate: int) ->
 		return false
 	return Game.gold >= Game.price(int(base * pow(growth, lv)))
 
+func _shop_sig(kind: String) -> String:
+	# 지금 그 건물에서 "살 수 있는 것들"의 지문 — 달라지면 마커를 다시 켠다 (v4.1)
+	match kind:
+		"chief":
+			var parts: Array = []
+			for e in main.BUILD_CATALOG:
+				if not main.catalog_built(e) and main.catalog_unlocked(e) and Game.gold >= int(e["cost"]):
+					parts.append(String(e["id"]))
+			if Game.extra_pots < 3 and Game.gold >= int(30 * pow(2.2, Game.extra_pots)):
+				parts.append("pot%d" % Game.extra_pots)
+			for r in main.candidate_residents():
+				var c: Dictionary = r["cond"]
+				if c.has("gold") and (not c.has("lv") or Game.level >= int(c["lv"])) and Game.gold >= int(c["gold"]):
+					parts.append("ask:" + String(r["id"]))
+			return ",".join(parts)
+		"inn":
+			return "maxhp%d" % Game.up["max_hp"] if _can_up("max_hp", 30, 1.2, 9, 0) else ""
+		"church":
+			var cp: Array = []
+			if Game.ghost_count() > 0 and Game.gold >= Game.revive_cost():
+				cp.append("revive%d" % Game.ghost_count())
+			for uid in [["gaze",120,1.6,5],["stack",400,1.0,1],["heal_eye",150,1.8,4],
+					["golden_hands",200,1.0,1],["linger",260,1.0,1],["requiem",500,1.0,1]]:
+				if _can_up(uid[0], uid[1], uid[2], uid[3], 0):
+					cp.append("%s%d" % [uid[0], Game.up[uid[0]]])
+			return ",".join(cp)
+		"shop":
+			var sp: Array = []
+			for uid in [["gold_mult",60,1.25,9],["shovel",150,1.0,1],["pickaxe",300,2.0,3],
+					["lantern",120,1.9,3],["telepathy",500,1.0,1]]:
+				if _can_up(uid[0], uid[1], uid[2], uid[3], 0):
+					sp.append("%s%d" % [uid[0], Game.up[uid[0]]])
+			return ",".join(sp)
+		"train":
+			var tp: Array = []
+			for uid in [["win_cap",100,2.2,5],["battle_speed",25,1.22,12],["density",160,1.0,1],["flee",300,1.0,1]]:
+				var gate: int = (2 + Game.up["win_cap"] * 2) if uid[0] == "win_cap" else 0
+				if _can_up(uid[0], uid[1], uid[2], uid[3], gate):
+					tp.append("%s%d" % [uid[0], Game.up[uid[0]]])
+			return ",".join(tp)
+		"stable":
+			var stp: Array = []
+			for uid in [["speed",25,1.2,9],["intuition",800,1.0,1],["radius",200,2.0,3]]:
+				var gate: int = 5 if uid[0] == "intuition" else 0
+				if _can_up(uid[0], uid[1], uid[2], uid[3], gate):
+					stp.append("%s%d" % [uid[0], Game.up[uid[0]]])
+			return ",".join(stp)
+		"bank":
+			var bp: Array = []
+			for uid in [["bank_cap",400,2.4,5],["bank_rate",500,2.2,4]]:
+				if _can_up(uid[0], uid[1], uid[2], uid[3], 0):
+					bp.append("%s%d" % [uid[0], Game.up[uid[0]]])
+			return ",".join(bp)
+		"smith":
+			var sm = main.base_nodes.get("smith")
+			return "hot" if sm != null and is_instance_valid(sm) and sm.is_ready else ""
+		"weaponshop":
+			var wp: Array = []
+			for i in Game.members.size():
+				if Game.gold >= Game.weapon_cost(i):
+					wp.append("w%d:%d" % [i, int(Game.members[i]["weapon_lv"])])
+			return ",".join(wp)
+		"board":
+			return "track%d" % Game.up["track"] if _can_up("track", 350, 2.0, 2, 0) else ""
+	return ""
+
+func marker_on(kind: String) -> bool:
+	# v4.1: 살 게 있고(=지문 비어있지 않음) + 그 지문을 아직 확인 안 했을 때만 "!"
+	var sig := _shop_sig(kind)
+	if sig == "":
+		return false
+	return sig != Game._building_ack.get(kind, "__none__")
+
+func _ack_shop(kind: String) -> void:
+	# 메뉴를 열면 = 확인함 → 마커 끔 (새 구매거리 생기면 지문이 달라져 다시 켜진다)
+	Game._building_ack[kind] = _shop_sig(kind)
+
 func can_shop(kind: String) -> bool:
 	# v4.0 §B-1: 건물별 "지금 실행 가능한 일" 판정 — main의 마커 폴링이 부른다
 	match kind:
@@ -1024,8 +1199,10 @@ func open_inn() -> void:
 	_menu_kind = "inn"
 	var v := _menu_panel("여관 — \"어서 오세요\"")
 	var need: bool = Game.lowest_hp_ratio() < 1.0 or Game.ghost_count() > 0
-	_menu_row(v, "쉬어간다", "일행의 HP를 전부 회복한다 (직접 와야 한다)", "무료" if not remote_open else "몸으로",
-		need and not remote_open, _inn_rest)
+	var rest_cost := Game.inn_rest_cost()
+	var rest_btn := "몸으로" if remote_open else ("무료" if rest_cost <= 0 else "%d G" % rest_cost)
+	_menu_row(v, "쉬어간다", "일행의 HP를 전부 회복한다 (잃은 만큼 값을 치른다)", rest_btn,
+		need and not remote_open and Game.gold >= rest_cost, _inn_rest)
 	_up_row(v, "max_hp", "침구 개선", "전원 최대 HP +8%", 30, 1.2, 9, 0)
 	# 작전 명령 (v3.2 §B-3 — 드퀘4 오마주. 훈장=반영구, 작전=수시 스위치)
 	if Game.tactic_known:
@@ -1118,6 +1295,11 @@ func _tactic_row(v: VBoxContainer, id: String, name_txt: String, sub: String) ->
 			open_inn())
 
 func _inn_rest() -> void:
+	# v4.1: 유료화 — 잃은 HP 비율만큼 골드 지불
+	var cost := Game.inn_rest_cost()
+	if cost > 0 and not Game.try_spend(cost):
+		Sfx.play("deny")
+		return
 	Sfx.play("heal")
 	Game.add_stat("inn_rests")
 	Game.heal_all_full()
@@ -1965,6 +2147,9 @@ func title_hide(on: bool) -> void:
 	_event_box.visible = false
 	_event_q.clear()
 	_event_showing = false
+	_event_state = "idle"
+	if _event_tween != null and _event_tween.is_valid():
+		_event_tween.kill()
 
 var _title_suppress := false
 

@@ -113,7 +113,8 @@ func flavor() -> String:
 		if boss_name.contains("감시자"):
 			return "감시자가 당신의 시선을 불쾌해한다."  # 시선 설정에 대한 유일한 농담 (v3.7 §G)
 		return boss_name + ". 이 땅의 색은 저 녀석의 것이다."
-	return FLAVORS.get(def.get("id", ""), "몬스터다.")
+	# v4.2: 이름을 앞세운다 — 한 번 싸워 본 적은 호버에 이름이 뜬다 (검시가 곧 도감)
+	return "%s — %s" % [hover_name(), FLAVORS.get(def.get("id", ""), "몬스터다.")]
 
 func pick_radius() -> float:
 	return 22.0 if is_boss else 14.0

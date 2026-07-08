@@ -262,6 +262,21 @@ var up := {
 # 성수 게이지 (v3.1 §B-7-4 — 수량제 아님, 자동 재생 리소스)
 var holy := 12.0
 
+# v4.1 허수아비 = 공격력 버프 (두드리면 일정 시간 전원 공격 ↑)
+var scarecrow_until := 0.0        # playtime 기준 만료 시각
+const SCARECROW_DUR := 30.0
+const SCARECROW_MULT := 1.25
+var _building_ack := {}           # v4.1 §마커: 건물별 "확인한 구매 목록" — 방문하면 마커 꺼짐
+
+func scarecrow_on() -> bool:
+	return playtime < scarecrow_until
+
+func scarecrow_mult() -> float:
+	return SCARECROW_MULT if scarecrow_on() else 1.0
+
+func buff_scarecrow() -> void:
+	scarecrow_until = playtime + SCARECROW_DUR
+
 # 은행 (v3.1 §B-8 — 예금은 전멸에도 불가침)
 var deposit := 0
 
@@ -300,6 +315,16 @@ func built_count() -> int:
 		if fixtures[k]:
 			n += 1
 	return n + extra_pots
+
+func inn_rest_cost() -> int:
+	# v4.1: 쉬어가기 유료화 — 잃은 HP 비율만큼 현재 골드의 %를 낸다 (최소 1G, 상한 완만)
+	var miss := 1.0 - lowest_hp_ratio()
+	if ghost_count() > 0:
+		miss = maxf(miss, 0.5)  # 유령이 있으면 최소 절반값
+	if miss <= 0.001:
+		return 0
+	var pct := 0.08 + 0.12 * miss   # 8~20%
+	return maxi(1, int(gold * pct))
 
 func resident_count() -> int:
 	var n := 0
@@ -699,6 +724,8 @@ func member_atk(idx: int) -> int:
 		atk *= 1.15
 	if lunch_on():
 		atk *= 1.1  # 엄마의 도시락
+	if scarecrow_on():
+		atk *= SCARECROW_MULT  # v4.1: 허수아비 단련
 	return int(atk)
 
 func member_crit(idx: int) -> float:

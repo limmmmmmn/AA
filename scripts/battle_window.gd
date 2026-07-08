@@ -19,6 +19,7 @@ var _enemy_tex_sizes: Array = []      # 원본 텍스처 크기 (재배율용)
 var _enemy_base_pos: Array = []
 var _log_label: RichTextLabel
 var _base_position := Vector2.ZERO
+var _base_width := 120.0              # v4.1: 기본 창 폭 (큰 적 확장의 하한)
 var _flash := 0.0
 var _golden: TextureRect = null
 var _golden_hovering := false
@@ -37,6 +38,7 @@ static var _strip_rx: RegEx = null
 func setup(p_sim: BattleSim, p_size: Vector2, boss: bool) -> void:
 	sim = p_sim
 	is_boss = boss
+	_base_width = p_size.x
 	custom_minimum_size = p_size
 	size = p_size
 	mouse_filter = Control.MOUSE_FILTER_STOP
@@ -108,15 +110,28 @@ func _build_enemies() -> void:
 	_layout_enemies()
 
 func _layout_enemies() -> void:
-	# v3.9: 몬스터는 원본 1배수 고정 (스프라이트 원본 픽셀 그대로 — 확대 금지)
+	# v3.9: 몬스터는 원본 1배수 고정. v4.1: 큰 적이 여럿이면 창을 가로로 늘려 다 담는다
 	if _enemy_nodes.is_empty():
 		return
-	var log_h := size.y / 3.0
-	var area_h := size.y - log_h - 4.0
 	var total := 0.0
 	for i in _enemy_tex_sizes.size():
 		total += _enemy_tex_sizes[i].x
 	total += 5.0 * (_enemy_nodes.size() - 1)
+	# 필요 폭이 기본 창을 넘으면 창 자체를 확장 (박쥐 4마리 등) — 보스 창은 고정
+	if not is_boss:
+		var need_w := total + 16.0
+		var want_w := maxf(_base_width, ceilf(need_w))
+		if absf(size.x - want_w) > 0.5:
+			size.x = want_w
+			custom_minimum_size.x = want_w
+			pivot_offset = size / 2.0
+			if _log_label != null:
+				_log_label.position = Vector2(7, size.y - 28)
+				_log_label.size = Vector2(size.x - 14, 26)
+			if _flee_btn != null and is_instance_valid(_flee_btn):
+				_flee_btn.position = Vector2(size.x - 40, 4)
+	var log_h := size.y / 3.0
+	var area_h := size.y - log_h - 4.0
 	var x := (size.x - total) / 2.0
 	for i in _enemy_nodes.size():
 		var tr: TextureRect = _enemy_nodes[i]

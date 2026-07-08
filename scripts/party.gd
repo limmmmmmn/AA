@@ -24,6 +24,7 @@ var _charm_sprites: Array = []     # 매혹된 몬스터 (장식 추종자)
 var _mount_sprite: Sprite2D = null # 탈것 (v3.2 §B-2 — 용사 밑에서 뜀박질)
 var _anim_t := 0.0
 var _dir_row := 0                  # 0 아래 1 왼쪽 2 오른쪽 3 위
+var _slot_dir_cache := {}          # v4.1: 멤버별 마지막 시선 (정지 시 깜빡임 방지)
 var _moving := false
 var _bob_t := 0.0
 var combo_glow := false            # 합체기 준비 완료 — 파티 발광
@@ -237,12 +238,22 @@ func _layout_sprites() -> void:
 		var p: Vector2 = _history[hist_i] if hist_i >= 0 else head_pos
 		s.position = p
 		s.z_index = order.size() - slot
+		# v4.1: 팔로워는 자기 궤적의 접선으로 시선을 잡는다 — 리더가 꺾여도 뒤로 걷지 않는다
+		var slot_dir: int = _dir_row
+		if slot > 0 and _moving:
+			var ahead: int = maxi(0, hist_i - SPACING)     # 궤적 상 앞(더 새 위치)
+			var move_vec: Vector2 = _history[ahead] - p
+			if move_vec.length() > 0.5:
+				slot_dir = _dir_from(move_vec)
+			else:
+				slot_dir = _slot_dir_cache.get(idx, _dir_row)
+		_slot_dir_cache[idx] = slot_dir
 		var ghost: bool = Game.members[idx]["ghost"]
 		if ghost:
 			s.modulate = Color(0.75, 0.85, 1.3, 0.5)
 			s.position.y -= 3.0 + sin(_bob_t + slot) * 2.0
 			if not underwater:
-				s.frame_coords = Vector2i(1, _dir_row)
+				s.frame_coords = Vector2i(1, slot_dir)
 		else:
 			var tint: Color = Game.COMPANIONS[Game.members[idx]["cls"]].get("tint", Color(1, 1, 1))
 			if Game.members[idx]["cls"] == "hero" and Game.roto_count() > 0:
@@ -256,9 +267,9 @@ func _layout_sprites() -> void:
 			s.modulate = tint
 			if underwater:
 				s.position.y -= 2.0 + sin(_bob_t * 1.6 + slot * 0.7) * 2.5  # 부유
-				s.flip_h = _dir_row == 1
+				s.flip_h = slot_dir == 1
 			else:
-				s.frame_coords = Vector2i(frame_col, _dir_row)
+				s.frame_coords = Vector2i(frame_col, slot_dir)
 	# 탈것 — 용사 발밑에서 함께 달린다
 	if _mount_sprite != null and is_instance_valid(_mount_sprite) and not _sprites.is_empty() and is_instance_valid(_sprites[0]):
 		_mount_sprite.position = _sprites[0].position + Vector2(0, 1)

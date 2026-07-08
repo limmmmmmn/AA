@@ -121,6 +121,7 @@ var _chief_wiped := false
 var _interest_timer := 30.0    # 은행 이자 틱
 var _requiem_timer := 0.0      # 스님의 성불 — 유령 자동 부활
 var _cave_voice_done := false  # 동굴 벽 목소리 (세션당 1회)
+var _guide_i := 0              # v4.1: 튜토리얼 안내원 팁 순회 (매번 다음 팁)
 # v3.2
 var _night_shade: Control = null     # 필드 밤 장막 (v3.4: 등불 구멍 포함)
 var _was_night := false              # 밤낮 경계 알림
@@ -256,7 +257,7 @@ func _popin_sequence() -> Array:
 				_: rest.append(c)
 		elif c is Sprite2D and not c.region_enabled:
 			rest.append(c)
-	for k in ["home", "mom", "chief"]:
+	for k in ["home", "chief"]:
 		for c in base_root.get_children():
 			if c is Interactable and c.kind == k:
 				first.append(c)
@@ -413,12 +414,12 @@ func _build_village() -> void:
 			base_root.add_child(wall2)
 	for p in [Vector2(28, 320), Vector2(190, 320)]:
 		_decor(base_root, "res://assets/objects/forest.png", p, Color(1, 1, 1))
-	# 시작 멤버: 용사의 집+엄마 + 촌장 + 항아리 둘 + "보이는데 못 여는 것" (잠긴 창고·붉은 상자)
-	base_nodes["home"] = _add_thing(base_root, "home", Vector2(76, 52))
-	_add_thing(base_root, "mom", Vector2(102, 58))
-	base_nodes["chief"] = _add_thing(base_root, "chief", Vector2(100, 148))
-	_add_thing(base_root, "warehouse", Vector2(34, 48))
-	_add_thing(base_root, "redchest", Vector2(186, 48))
+	# 시작 오브젝트 — v4.2: 상단 HUD 스트립(y≤38)을 피해 아래로. 엄마·건물앞 NPC 삭제(심플)
+	base_nodes["home"] = _add_thing(base_root, "home", Vector2(184, 108))  # 용사의 집 (우상단, 클리어)
+	base_nodes["chief"] = _add_thing(base_root, "chief", Vector2(100, 150))
+	_add_thing(base_root, "guide", Vector2(130, 152))  # v4.1: 튜토리얼 안내원
+	_add_thing(base_root, "warehouse", Vector2(30, 108))
+	_add_thing(base_root, "redchest", Vector2(184, 300))
 	var pot_n: int = mini(2 + Game.extra_pots * 2, POT_SPOTS.size())
 	for i in pot_n:
 		_add_thing(base_root, "pot", POT_SPOTS[i])
@@ -444,10 +445,7 @@ func _build_village() -> void:
 	# v4.0: 구매한 건물 + 입주 주민 ("건물이 서면 사람이 온다")
 	for e in BUILD_CATALOG:
 		if e["cat"] == "building" and Game.buildings.get(String(e["id"]), false):
-			base_nodes[e["id"]] = _add_thing(base_root, String(e["id"]), BUILD_POS[e["id"]])
-			if Game.residents.get(String(e["npc"]), false):
-				var bnpc := _add_thing(base_root, "resident", BUILD_POS[e["id"]] + Vector2(24, 12))
-				bnpc.resident_name = String(e["npc_name"])
+			base_nodes[e["id"]] = _add_thing(base_root, String(e["id"]), BUILD_POS[e["id"]])  # v4.2: 건물만
 
 func _place_resident(r: Dictionary, pop: bool) -> void:
 	var b: String = r["building"]
@@ -462,10 +460,7 @@ func _place_resident(r: Dictionary, pop: bool) -> void:
 	base_nodes[b] = node
 	if pop:
 		node.spawn_pop()
-	# 시설 옆에 서 있는 사람 — 마을에 서 있는 사람 수가 곧 진행바
-	if b != "bard" and b != "medalking":  # NPC형 시설은 본인이 곧 시설
-		var npc := _add_thing(base_root, "resident", BUILD_POS[b] + Vector2(24, 12))
-		npc.resident_name = r["name"]
+	# v4.2: 건물 앞 NPC 삭제 — 건물만으로 기능한다 (심플 이즈 베스트)
 
 func join_count() -> int:
 	# v3.2 §D: 합류 = 주민 + 동료 통합 (용사 제외. 촌장·엄마는 기본 거주자라 카운트 제외)
@@ -1204,6 +1199,8 @@ func _on_bump(node: Node2D) -> void:
 			hud.event("가로등이다. 밤이 조금 덜 무서워졌다.")
 		"scarecrow":
 			_bump_scarecrow(it)
+		"guide":
+			_bump_guide(it)
 		"cheatpot":
 			_cheat_gold(it)
 		"bank":
@@ -1369,7 +1366,7 @@ func _update_chief_alert() -> void:
 			or (Game.ui_unlocked["quest"] and hud.can_shop("chief"))
 	for key in ["inn", "church", "shop", "smith", "train", "stable", "bank", "weaponshop", "board"]:
 		if base_nodes.has(key) and is_instance_valid(base_nodes[key]):
-			base_nodes[key].show_alert = hud.can_shop(key)
+			base_nodes[key].show_alert = hud.marker_on(key)
 	if base_nodes.has("scarecrow") and is_instance_valid(base_nodes["scarecrow"]):
 		base_nodes["scarecrow"].show_alert = base_nodes["scarecrow"].is_ready
 
@@ -1710,6 +1707,10 @@ func _clamp_win(pos: Vector2) -> Vector2:
 	return pos.clamp(WIN_ZONE_MIN, WIN_ZONE_MAX)
 
 func _open_battle(defs: Array, boss: bool, at: Vector2 = Vector2.ZERO) -> void:
+	# v4.2: 한 번 싸운 적은 이름을 안다 — 필드 호버 시 ??? → 이름
+	for d in defs:
+		if d is Dictionary and d.has("id"):
+			Game.discovered["mon_" + String(d["id"])] = true
 	var sim := BattleSim.new()
 	sim.setup(defs, boss)
 	var w: BattleWindow = BATTLE_WINDOW_SCENE.instantiate()  # v3.5: 씬 인스턴스
@@ -2350,9 +2351,8 @@ func buy_catalog(id: String) -> bool:
 	if e["cat"] == "building":
 		Game.buildings[String(e["id"])] = true
 		base_nodes[e["id"]] = node
-		# 건물이 서면 사람이 온다 — 입주 연출 (§B-4 순서 반전)
+		# v4.2: 건물이 서면 곧 기능이 열린다 (건물만으로 충분 — 입주 인물 삭제)
 		Game.residents[String(e["npc"])] = true
-		_npc_movein(String(e["npc_name"]), BUILD_POS[e["id"]] + Vector2(24, 12))
 	else:
 		Game.fixtures[String(e["id"])] = true
 		if String(e["id"]) in ["board", "lamppost", "scarecrow"]:
@@ -2384,17 +2384,35 @@ func _npc_movein(npc_name: String, dest: Vector2) -> void:
 		Sfx.play("pop", 1.4))
 
 func _bump_scarecrow(it: Interactable) -> void:
-	# 허수아비 — 두드리면 잔돈이 떨어진다 (훈련소 연동 쿨타임 기물, v4.0 §B-4)
+	# v4.1: 허수아비 = 단련 — 두드리면 30초간 전원 공격력 +25% (훈련소 연동)
 	if not it.is_ready:
-		hud.event("허수아비가 아직 휘청거리고 있다…")
+		hud.event("허수아비를 방금 두드렸다. 숨 좀 고르자…")
 		return
 	Sfx.play("hit")
-	var g := int((6 + Game.level * 2) * Game.gold_scale())
-	Game.add_gold(g)
-	hud.popup("+%d G" % g, it.global_position)
-	hud.coin_burst(it.global_position, 2)
-	hud.event("허수아비를 후려쳤다! 잔돈이 우수수 떨어졌다.")
-	it.start_cooldown(45.0)
+	Game.buff_scarecrow()
+	hud.popup("공격 ↑", it.global_position, UILib.COL_RED)
+	hud.event("허수아비를 실컷 두드렸다! 몸이 후끈 달아오른다. (%d초간 공격력 +%d%%)"
+		% [int(Game.SCARECROW_DUR), int((Game.SCARECROW_MULT - 1.0) * 100)], 4.0)
+	it.start_cooldown(Game.SCARECROW_DUR)  # 버프 지속 = 쿨타임 (연장 스팸 방지)
+
+const GUIDE_TIPS := [
+	"전투창에 [color=#f5c542]마우스를 올리면[/color] 그 창의 아군이 힘을 내. 여러 창을 번갈아 주시하는 게 요령이야.",
+	"[color=#f5c542]황금 슬라임[/color]이 나타나면 도망가기 전에 마구 문질러(클릭) 붙잡아! 교회 「황금의 손길」이 필요해.",
+	"쓰러진 몬스터의 [color=#f5c542]수배서[/color]를 게시판에서 모으면 그 필드의 [color=#ef476f]지배자[/color]의 결계가 풀려.",
+	"작은 [color=#f5c542]메달[/color]은 항아리·상자·발굴에서 나와. 메달왕에게 가져가면 훈장으로 바꿔 줘.",
+	"[color=#f5c542]훈장[/color]은 도전과제처럼 습관이 모이면 얻어. 촌장 옆에서 여섯 개까지 달 수 있지.",
+	"어부 형제의 [color=#f5c542]바다의 노래[/color]를 배우면… 이정표에 없던 길이 하나 열린다더군. (숨겨진 필드!)",
+	"전설의 [color=#f5c542]오의서[/color]를 찾으면 여관에서 장착해. 게이지가 차면 필살기를 쏠 수 있어.",
+	"교회에서 [color=#f5c542]겹쳐보기[/color]를 배우고 「소집」을 켜면, 창들이 깔끔하게 포개져. 후반 필수야.",
+	"허수아비를 두드리면 잠깐 공격력이 오르니, [color=#ef476f]지배자[/color]와 붙기 직전에 들르면 좋아.",
+	"밤이 오면 시야가 좁아져. 촌장의 [color=#f5c542]등불[/color]과 마을 가로등이 어둠을 밀어내지.",
+]
+
+func _bump_guide(it: Interactable) -> void:
+	Sfx.play("bump")
+	var tip: String = GUIDE_TIPS[_guide_i % GUIDE_TIPS.size()]
+	_guide_i += 1
+	hud.event("안내원: 「%s」" % tip, 6.0, "chief")
 
 func build_board() -> void:
 	# (v4.0: buy_catalog("board")가 표준 경로 — 직접 호출 호환용)

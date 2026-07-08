@@ -62,14 +62,33 @@ func _run() -> void:
 		if scn is Interactable and scn.kind == "scarecrow":
 			sc = scn
 	assert(sc != null)
-	var g_before := Game.gold
+	# v4.1: 허수아비 = 공격력 버프 (잔돈 아님)
 	main._bump_scarecrow(sc)
-	assert(Game.gold > g_before and not sc.is_ready)  # 잔돈 + 쿨타임
-	assert(main.hud.can_shop("chief"))  # 골드가 넘치니 촌장 위에 "!"가 켜져 있어야 한다
+	assert(Game.scarecrow_on() and not sc.is_ready)  # 버프 켜짐 + 쿨타임
+	var atk_buffed: int = Game.member_atk(0)
+	Game.scarecrow_until = 0.0  # 버프 끄고 비교
+	assert(atk_buffed > Game.member_atk(0))  # 버프가 실제로 공격력을 올렸다
+	# v4.1: 마커 = ack 방식 (can_shop은 유지, marker_on은 방문 전 true)
+	assert(main.hud.can_shop("chief"))  # 골드가 넘치니 살 게 있다
+	assert(main.hud.marker_on("chief"))  # 아직 방문 안 함 → "!" 켜짐
 	main._update_chief_alert()
 	assert(main.base_nodes["chief"].show_alert)
-	assert(main.hud.can_shop("train"))  # 훈련소에도 살 게 있다
-	print("[SMOKE] v4.0 건설 카탈로그/기물/마커 OK — 건설물 %d개" % Game.built_count())
+	main.hud.open_chief()      # 방문 = 확인
+	main.hud.close_menu()
+	assert(not main.hud.marker_on("chief"))  # 확인 후 → "!" 꺼짐 (성소 상시 노출 버그 수정)
+	assert(main.hud.can_shop("train"))
+	print("[SMOKE] v4.1 허수아비 버프/마커 ack OK — 건설물 %d개" % Game.built_count())
+
+	# v4.1: 여관 유료화 — 잃은 HP만큼 골드 지불
+	Game.damage_member(0, 5)
+	var gold_pre := Game.gold
+	var rest_cost := Game.inn_rest_cost()
+	assert(rest_cost > 0)
+	main.hud.open_inn()
+	main.hud._inn_rest()
+	assert(Game.gold == gold_pre - rest_cost)          # 값을 치렀다
+	assert(Game.members[0]["hp"] == Game.members[0]["max_hp"])  # 회복됐다
+	print("[SMOKE] 여관 유료화 OK — %d G 지불" % rest_cost)
 
 	# 3) 전투 + 황금 슬라임 (한 화면 — 필드는 오른쪽에 그대로 있다)
 	var mons: Array = []
@@ -77,6 +96,7 @@ func _run() -> void:
 		if not m.is_boss:
 			mons.append(m)
 	assert(mons.size() >= 5)
+	var first_mon_id: String = String(mons[0].def["id"])  # v4.2: 처치 전에 id 확보
 	main._bump_monster(mons[0])
 	main._bump_monster(mons[1])
 	await get_tree().create_timer(1.0).timeout
@@ -86,7 +106,22 @@ func _run() -> void:
 	await get_tree().create_timer(0.3).timeout
 	for i in 40:
 		w.sim.rub_golden(0.04)
-	print("[SMOKE] 전투/황금 OK — gold=%d" % Game.gold)
+	# v4.2: 한 번 싸운 적은 이름을 안다 (호버 ??? → 이름)
+	assert(Game.discovered.get("mon_" + first_mon_id, false))
+	var live_mon: FieldMonster = null
+	for lm in get_tree().get_nodes_in_group("monster"):
+		if is_instance_valid(lm) and not lm.is_boss:
+			live_mon = lm
+	assert(live_mon != null and live_mon.flavor().contains(live_mon.hover_name()))  # 검시에 이름
+	# v4.2: 이벤트 박스 즉시 전환 — 두 번째 대사가 대기 없이 바로 표시
+	main.hud.event("첫 번째 말")
+	await get_tree().create_timer(0.05).timeout
+	main.hud.event("두 번째 말 — 즉시 교체")
+	await get_tree().create_timer(0.05).timeout
+	assert(main.hud._event_label.text.contains("즉시 교체"))  # 대기 없이 새 대사로
+	assert(main.hud._event_label.visible_characters >= 0)     # 타자기 진행 중
+	main.hud.event("")  # 정리
+	print("[SMOKE] 전투/황금/적이름/대사전환 OK — gold=%d" % Game.gold)
 
 	# 4) 수배서 → 결계 해제 → 지배자 처치 → 열쇠/이정표/다음 필드
 	Game.posters_f[0] = 3
@@ -565,8 +600,28 @@ func _shots() -> void:
 	await get_tree().create_timer(2.5).timeout
 	if main.windows.size() > 0:
 		main.windows[0].sim.spawn_golden(20.0)
+	# v4.1: 파티 데미지 → HP 숫자 연출 확인
+	Game.damage_member(1, 8)
+	Game.damage_member(2, 14)
 	await get_tree().create_timer(1.0).timeout
-	await _save_shot("shot_village3.png")  # 한 화면: 마을⅓ + 필드⅔ + 창
+	await _save_shot("shot_village3.png")  # 한 화면: 마을⅓ + 필드⅔ + 창 + HP 숫자
+
+	# v4.1: 큰 적 4마리 → 전투창 가로 확장
+	for w0 in main.windows.duplicate():
+		if is_instance_valid(w0) and not w0.is_boss:
+			w0.close_after(0.0)
+	await get_tree().create_timer(0.4).timeout
+	var bat_def: Dictionary = {}
+	for md in Game.MONSTER_DEFS:
+		if md["id"] == "cyclops":  # 가장 큰 스프라이트
+			bat_def = md
+	main._open_battle([bat_def, bat_def, bat_def, bat_def], false, Vector2(300, 120))
+	await get_tree().create_timer(0.6).timeout
+	await _save_shot("shot_bigenemies.png")  # 큰 적 4마리 = 가로로 늘어난 창
+	for w1 in main.windows.duplicate():
+		if is_instance_valid(w1) and not w1.is_boss:
+			w1.close_after(0.0)
+	await get_tree().create_timer(0.4).timeout
 	# 툴팁 — 세로 쪼개짐 회귀 방지 (main._process 정지 → _update_hover가 set_hover 안 지움)
 	for w in main.windows.duplicate():
 		if is_instance_valid(w) and not w.is_boss:
@@ -579,6 +634,14 @@ func _shots() -> void:
 	assert(tl.get_line_count() == 1)  # 한 줄 가로 (세로 쪼개짐 회귀 시 여러 줄)
 	main.hud._tooltip.position = Vector2(120, 150)
 	await _save_shot("shot_tooltip.png")
+	# v4.1: 마커 z-order — 건물 위에 "!"가 앞으로 뜨는지 (골드 충분 상태)
+	main.set_process(true)
+	main.hud.set_hover("")
+	Game.add_gold(20000)
+	Game._building_ack.clear()   # 방문 기록 초기화 → 살 게 있는 곳 전부 "!"
+	main._update_chief_alert()
+	await get_tree().create_timer(0.5).timeout
+	await _save_shot("shot_markers.png")  # 촌장 옆 안내원 + 건물 마커 앞으로
 	main.hud.set_hover("게시판")
 	await get_tree().create_timer(0.2).timeout
 	assert(tl.get_line_count() == 1)
