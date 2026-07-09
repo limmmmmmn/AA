@@ -261,6 +261,32 @@ func toast(text: String, dur: float = 3.0) -> void:
 func show_bubble(_text: String, _screen_pos: Vector2) -> void:
 	pass  # 툴팁(_hover_text)이 대신한다 — 호환용 빈 함수
 
+func speech_bubble(text: String, world_pos: Vector2, dur: float = 3.0) -> void:
+	# v4.3: 머리 위 말풍선 — 월드 좌표(=화면 좌표, 뷰 고정)에 잠깐 뜬다
+	if _title_suppress:
+		return
+	var b := DQPanel.new()
+	b.border_color = UILib.COL_GOLD
+	var lbl := UILib.make_rich(UILib.colorize(text), UILib.FS)
+	lbl.fit_content = true
+	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	lbl.custom_minimum_size = Vector2(0, 0)
+	b.add_child(lbl)
+	b.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_fx_root.add_child(b)
+	b.reset_size()
+	b.position = world_pos - Vector2(b.size.x / 2.0, b.size.y + 6.0)
+	b.position.x = clampf(b.position.x, 2.0, 638.0 - b.size.x)
+	b.position.y = maxf(2.0, b.position.y)
+	b.pivot_offset = Vector2(b.size.x / 2.0, b.size.y)
+	b.scale = Vector2(0.2, 0.2)
+	Sfx.play("blip", 1.2)
+	var tw := create_tween()
+	tw.tween_property(b, "scale", Vector2.ONE, 0.14).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.tween_interval(dur)
+	tw.tween_property(b, "modulate:a", 0.0, 0.3)
+	tw.tween_callback(b.queue_free)
+
 func hide_bubble() -> void:
 	pass
 
@@ -867,7 +893,7 @@ func _menu_panel(title: String) -> VBoxContainer:
 	close_menu()
 	_menu_kind = kind
 	remote_open = remote
-	if kind in ["chief", "inn", "church", "shop", "train", "stable", "bank", "weaponshop", "board", "smith"]:
+	if kind in ["chief", "inn", "church", "shop", "train", "stable", "bank", "weaponshop", "board", "smith", "gearshop"]:
 		_ack_shop(kind)  # v4.1: 방문 = 확인 → 마커 끔
 	# v3.4 §B-2: 커맨드 창 = 화면 좌측 고정 슬롯 1개, 동시 개방 1개
 	var p := UILib.make_panel(UILib.COL_GOLD)
@@ -1072,6 +1098,13 @@ func _shop_sig(kind: String) -> String:
 			return ",".join(wp)
 		"board":
 			return "track%d" % Game.up["track"] if _can_up("track", 350, 2.0, 2, 0) else ""
+		"gearshop":
+			var gp: Array = []
+			for uid in [["gear_atk",15,1.28,20],["gear_hp",20,1.30,20],["gear_def",25,1.32,20],
+					["gear_spd",30,1.30,12],["gear_gold",30,1.30,12]]:
+				if _can_up(uid[0], uid[1], uid[2], uid[3], 0):
+					gp.append("%s%d" % [uid[0], Game.up[uid[0]]])
+			return ",".join(gp)
 	return ""
 
 func marker_on(kind: String) -> bool:
@@ -1137,6 +1170,10 @@ func can_shop(kind: String) -> bool:
 			return false
 		"board":
 			return _can_up("track", 350, 2.0, 2, 0)
+		"gearshop":
+			return _can_up("gear_atk", 15, 1.28, 20, 0) or _can_up("gear_hp", 20, 1.30, 20, 0) \
+				or _can_up("gear_def", 25, 1.32, 20, 0) or _can_up("gear_spd", 30, 1.30, 12, 0) \
+				or _can_up("gear_gold", 30, 1.30, 12, 0)
 	return false
 
 func _up_row(v: VBoxContainer, id: String, name_txt: String, desc: String, base: int, growth: float, max_lv: int, lv_gate: int) -> void:
@@ -1165,6 +1202,7 @@ func _buy_up(id: String, cost: int, reopen: String) -> void:
 		"train": open_training()
 		"stable": open_stable()
 		"board": open_board()
+		"gearshop": open_gearshop()
 		_: open_chief()
 
 func _chief_pay(id: String) -> void:
@@ -1333,7 +1371,7 @@ func open_church() -> void:
 	_up_row(v, "gaze", "주시 강화", "지켜보는 창의 가속·회심이 강해진다", 120, 1.6, 5, 0)
 	_up_row(v, "stack", "겹쳐보기", "전투창들이 겹쳐 정리되고, 스택 주시 = 전체 주시", 400, 1.0, 1, 0)  # v3.4 §B-1
 	_up_row(v, "heal_eye", "치유의 눈길", "파티창을 바라보면 성수가 상처를 씻는다", 150, 1.8, 4, 0)
-	_up_row(v, "golden_hands", "황금의 손길", "황금 슬라임을 문질러 붙잡을 수 있게 된다", 200, 1.0, 1, 0)
+	_up_row(v, "golden_hands", "황금의 손길", "황금 슬라임을 더 빨리 붙잡고, 더 자주 나타난다", 120, 1.7, 4, 0)
 	_up_row(v, "linger", "노래의 여운", "주시가 커서를 떼도 잠시 남는다", 260, 1.0, 1, 0)
 	_up_row(v, "requiem", "성불의 종", "유령 동료가 시간이 지나면 스스로 되살아난다", 500, 1.0, 1, 0)
 	if Game.up["heal_eye"] > 0 or Game.up["golden_hands"] > 0:
@@ -1355,6 +1393,17 @@ func _church_revive() -> void:
 	Game.revive_all()
 	event("빛이 일행을 감싸안았다. 되살아났다!", 3.0)
 	close_menu()
+
+func open_gearshop() -> void:
+	# v4.3: 장비점 = 초반 강화축. 진짜 아이템이 아니라 수치업 (무기/방어구/신발/벨트/부적)
+	_menu_kind = "gearshop"
+	var v := _menu_panel("장비점 — \"몸에 걸치면 강해집니다\"")
+	v.add_child(UILib.make_label("사면 즉시 전원에게 적용됩니다", UILib.FS, UILib.COL_GRAY))
+	_up_row(v, "gear_atk", "무기 강화", "전원 공격력 +2", 15, 1.28, 20, 0)
+	_up_row(v, "gear_hp", "방어구", "전원 최대 HP +10%", 20, 1.30, 20, 0)
+	_up_row(v, "gear_def", "방패·투구", "전원 방어력 +4 (받는 피해 감소)", 25, 1.32, 20, 0)
+	_up_row(v, "gear_spd", "신발", "이동 속도 +5%", 30, 1.30, 12, 0)
+	_up_row(v, "gear_gold", "돈주머니 벨트", "골드 획득 +8%", 30, 1.30, 12, 0)
 
 func open_shop_menu() -> void:
 	_menu_kind = "shop"
@@ -1556,7 +1605,7 @@ func open_board(tab: int = -1) -> void:
 		_board_tab = Game.current_field  # v3.4 §B-8: 현재 필드 탭 자동 선택
 	if not Game.fields_unlocked[_board_tab]:
 		_board_tab = 0
-	var v := _menu_panel("수배 게시판 — 정찰대 파견")
+	var v := _menu_panel("탐문 게시판 — 놈들은 어디 사는가")
 	# 필드 탭
 	var tabs := HBoxContainer.new()
 	tabs.add_theme_constant_override("separation", 4)
@@ -1575,14 +1624,14 @@ func open_board(tab: int = -1) -> void:
 		var cost := Game.poster_cost(field, i)
 		var bought: bool = Game.posters_f[field] > i
 		var is_next: bool = Game.posters_f[field] == i
-		var sub := "%s에 %s이(가) 출현하게 된다" % [Game.FIELD_NAMES[field], mon_name]
+		var sub := "%s의 %s이(가) 사는 곳을 알아낸다" % [Game.FIELD_NAMES[field], mon_name]
 		if i == 2:
-			sub += " (3장을 모으면 지배자가 깨어난다)"
-		_menu_row(v, "수배서: " + mon_name, sub,
-			"파견 완료" if bought else "%d G" % cost,
+			sub += " (셋을 다 알면 지배자의 소굴이 드러난다)"
+		_menu_row(v, "서식지 단서: " + mon_name, sub,
+			"조사 완료" if bought else "%d G" % cost,
 			is_next and Game.gold >= cost,
 			func(): _buy_poster(field, i, cost))
-	_up_row(v, "track", "정찰 보고", "수배된 몬스터·지배자에게 주는 데미지 상승", 350, 2.0, 2, 0)
+	_up_row(v, "track", "약점 분석", "서식지를 아는 몬스터·지배자에게 주는 데미지 상승", 350, 2.0, 2, 0)
 	var g_cost := int(200 * Game.gold_scale())
 	_menu_row(v, "황금 슬라임 목격 정보", "황금 슬라임이 더 자주 나타난다",
 		"입수 완료" if Game.golden_info else "%d G" % g_cost,
@@ -1596,7 +1645,7 @@ func _buy_poster(field: int, i: int, cost: int) -> void:
 	Game.posters_f[field] += 1
 	Sfx.play("buy")
 	var mon: Dictionary = Game.MONSTER_DEFS[i + 1]
-	event("정찰대를 보냈다. %s%s이(가) 나타나기 시작한다…" % [Game.FIELD_PREFIX[field], mon["name"]], 3.5)
+	event("탐문 끝에 %s%s의 서식지를 알아냈다. 이제 놈들이 어디 사는지 안다." % [Game.FIELD_PREFIX[field], mon["name"]], 3.5)
 	Game.save_game()
 	if Game.posters_f[field] >= 3 and main != null:
 		main.on_posters_complete(field)

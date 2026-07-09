@@ -250,13 +250,15 @@ var up := {
 	"speed": 0, "win_cap": 0, "battle_speed": 0,
 	"gold_mult": 0, "max_hp": 0, "density": 0,
 	"shovel": 0, "radius": 0, "intuition": 0,
-	"gaze": 0, "heal_eye": 0, "golden_hands": 0,
+	"gaze": 0, "heal_eye": 0, "golden_hands": 0,  # v4.3 golden_hands = 포획 속도·출현 빈도 강화(해금 아님)
 	"holy_max": 0, "holy_regen": 0,
 	"flee": 0, "telepathy": 0,
 	"bank_cap": 0, "bank_rate": 0,
 	"lantern": 0, "stack": 0,  # v3.4: 밤 시야 등불 / 겹쳐보기(=소집 토글)
 	# v3.9 §B-2: 고아가 된 객원 패시브의 이관
 	"requiem": 0, "linger": 0, "meal": 0, "pickaxe": 0, "track": 0,
+	# v4.3 장비점 = 초반 강화축 (진짜 아이템 아님, 수치업). def = 신설 방어 스탯
+	"gear_atk": 0, "gear_hp": 0, "gear_def": 0, "gear_spd": 0, "gear_gold": 0,
 }
 
 # 성수 게이지 (v3.1 §B-7-4 — 수량제 아님, 자동 재생 리소스)
@@ -705,7 +707,7 @@ func member_atk_flat(idx: int) -> int:
 	# 플랫 = 무기점의 영역 (v3.4 §B-5 — 주 성장축)
 	var m: Dictionary = members[idx]
 	var base: int = COMPANIONS[m["cls"]]["atk"]
-	var flat: int = base + int(m["weapon_lv"]) * 2 + int(level / 2.0)
+	var flat: int = base + int(m["weapon_lv"]) * 2 + int(level / 2.0) + up["gear_atk"] * 2  # v4.3 장비:무기
 	# 로토의 검 고유 보너스 (v3.8 §B-6 — 스토리 성장은 교체 이벤트로)
 	if m["cls"] == "hero" and sword_rock >= 2:
 		flat += 6
@@ -728,6 +730,20 @@ func member_atk(idx: int) -> int:
 		atk *= SCARECROW_MULT  # v4.1: 허수아비 단련
 	return int(atk)
 
+func member_def(idx: int) -> int:
+	# v4.3 방어력 = 장비(방어구) + 레벨 + 기사의 도발 계열 살짝. 설원 보스를 정당한 성장으로 넘게 한다
+	var d: int = up["gear_def"] * 4 + int(level / 2.0)
+	if members[idx]["cls"] == "knight":
+		d += 4  # 기사는 태생이 단단하다
+	if medal_on("sturdy_charm"):
+		d += 6
+	return d
+
+func mitigate(idx: int, dmg: int) -> int:
+	# 받는 피해 경감: dmg * K/(K+def). def=30 → 절반, def=90 → ¼. 성장할수록 계속 유효
+	var d := float(member_def(idx))
+	return maxi(1, int(round(float(dmg) * 40.0 / (40.0 + d))))
+
 func member_crit(idx: int) -> float:
 	var c: float = COMPANIONS[members[idx]["cls"]]["crit"]
 	c += 0.10 * passive_scale("crit")  # 무도가의 회심 — 파티 전체
@@ -737,7 +753,7 @@ func member_max_hp(idx: int) -> int:
 	var m: Dictionary = members[idx]
 	var base: int = COMPANIONS[m["cls"]]["hp"]
 	# 침구 개선 = %화 (v3.1 §B-6 — 덧셈 방어는 곱셈 공격을 못 따라간다)
-	var mx: float = (base + (level - 1) * 3) * (1.0 + 0.08 * up["max_hp"])
+	var mx: float = (base + (level - 1) * 4) * (1.0 + 0.08 * up["max_hp"] + 0.10 * up["gear_hp"])  # v4.3 장비:방어구
 	if medal_on("sturdy_charm"):
 		mx *= 1.2
 	return int(mx)
@@ -827,7 +843,7 @@ func mounted() -> bool:
 	return up["speed"] >= 9
 
 func move_speed() -> float:
-	var v := 65.0 * pow(1.08, up["speed"])
+	var v := 65.0 * pow(1.08, up["speed"]) * (1.0 + 0.05 * int(up["gear_spd"]))  # v4.3 장비:신발
 	if mounted():
 		v *= 1.25  # 탈것 보너스
 	if medal_on("wind_sign"):
@@ -842,7 +858,7 @@ func turn_interval() -> float:
 
 func gold_multiplier() -> float:
 	# v3.3 §A: 회차 배율 스케일링 금지 — 프레스티지 수학이 침투하면 2주차가 의무가 된다
-	var g := pow(1.15, up["gold_mult"])
+	var g := pow(1.15, up["gold_mult"]) * (1.0 + 0.08 * int(up["gear_gold"]))  # v4.3 장비:벨트
 	if medal_on("aqua_regia"):
 		g *= 2.0
 	var steal_s := passive_scale("steal")

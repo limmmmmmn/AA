@@ -27,6 +27,7 @@ const BUILD_POS := {
 	"medalking": Vector2(20, 148), "board": Vector2(142, 132),
 	"bank": Vector2(36, 254), "weaponshop": Vector2(172, 260),
 	"train": Vector2(76, 232), "stable": Vector2(148, 232),  # v4.0 신규 건물
+	"gearshop": Vector2(60, 300),  # v4.3 장비점 (시작부터)
 	"well": Vector2(160, 96), "lamppost": Vector2(108, 186),  # v4.0 기물
 	"scarecrow": Vector2(24, 220), "frogstatue": Vector2(68, 266),
 }
@@ -390,16 +391,18 @@ func _build_village() -> void:
 		c.queue_free()
 	base_nodes.erase("chief")
 	var stage := _revival_stage()
-	# 마을 바닥 — 부흥 단계에 따라 광장이 자란다 (v3.2: 4단계)
-	_repeat_sprite(base_root, "res://assets/Tiles/Grass_Middle.png", Rect2(0, 0, VILLAGE_W, ROOM.y), Vector2.ZERO, Color(1, 1, 1))
-	var plaza := Rect2(56, 116, 108, 160)
-	if stage >= 1:
-		plaza = Rect2(24, 72, 172, 236)
-	if stage >= 2:
-		plaza = Rect2(12, 48, 196, 276)
-	_repeat_sprite(base_root, "res://assets/Tiles/Path_Middle.png", Rect2(0, 0, plaza.size.x, plaza.size.y), plaza.position, Color(1, 1, 1))
-	if stage >= 3:
-		# 성벽 일부 (임시 도형) — 4단계에 완성
+	# 마을 바닥 — 유저 맵(village.png 216×360)이 있으면 그것을, 없으면 절차 잔디+광장
+	var has_map: bool = _custom_bg(base_root, "res://assets/maps/village.png", Vector2.ZERO, Vector2(VILLAGE_W, ROOM.y))
+	if not has_map:
+		_repeat_sprite(base_root, "res://assets/Tiles/Grass_Middle.png", Rect2(0, 0, VILLAGE_W, ROOM.y), Vector2.ZERO, Color(1, 1, 1))
+		var plaza := Rect2(56, 116, 108, 160)
+		if stage >= 1:
+			plaza = Rect2(24, 72, 172, 236)
+		if stage >= 2:
+			plaza = Rect2(12, 48, 196, 276)
+		_repeat_sprite(base_root, "res://assets/Tiles/Path_Middle.png", Rect2(0, 0, plaza.size.x, plaza.size.y), plaza.position, Color(1, 1, 1))
+	if stage >= 3 and not has_map:
+		# 성벽 일부 (임시 도형) — 4단계에 완성 (유저 맵이면 유저가 그린다)
 		var wall := Line2D.new()
 		wall.points = PackedVector2Array([Vector2(6, 40), Vector2(6, 340), Vector2(210, 340)]) if stage >= 4 \
 			else PackedVector2Array([Vector2(6, 120), Vector2(6, 340)])
@@ -412,12 +415,14 @@ func _build_village() -> void:
 			wall2.width = 1.0
 			wall2.default_color = Color("8a7a58")
 			base_root.add_child(wall2)
-	for p in [Vector2(28, 320), Vector2(190, 320)]:
-		_decor(base_root, "res://assets/objects/forest.png", p, Color(1, 1, 1))
+	if not has_map:
+		for p in [Vector2(28, 320), Vector2(190, 320)]:
+			_decor(base_root, "res://assets/objects/forest.png", p, Color(1, 1, 1))
 	# 시작 오브젝트 — v4.2: 상단 HUD 스트립(y≤38)을 피해 아래로. 엄마·건물앞 NPC 삭제(심플)
 	base_nodes["home"] = _add_thing(base_root, "home", Vector2(184, 108))  # 용사의 집 (우상단, 클리어)
 	base_nodes["chief"] = _add_thing(base_root, "chief", Vector2(100, 150))
 	_add_thing(base_root, "guide", Vector2(130, 152))  # v4.1: 튜토리얼 안내원
+	base_nodes["gearshop"] = _add_thing(base_root, "gearshop", BUILD_POS["gearshop"])  # v4.3: 장비점(초반 강화)
 	_add_thing(base_root, "warehouse", Vector2(30, 108))
 	_add_thing(base_root, "redchest", Vector2(184, 300))
 	var pot_n: int = mini(2 + Game.extra_pots * 2, POT_SPOTS.size())
@@ -503,6 +508,23 @@ func _add_thing(root: Node2D, kind: String, pos: Vector2, recruit_cls: String = 
 
 # ================================================================ 필드 (우⅔ — 이정표로 내용물만 교체)
 
+# v4.3: 유저가 직접 그린 배경 PNG가 있으면 절차 생성 대신 그것을 깐다.
+# 규격 — 필드: 424×360 (res://assets/maps/field_0.png ~ field_5.png)
+#        마을: 216×360 (res://assets/maps/village.png)
+func _custom_bg(root: Node2D, path: String, at: Vector2, sz: Vector2) -> bool:
+	if not ResourceLoader.exists(path):
+		return false
+	var s := Sprite2D.new()
+	s.texture = load(path)
+	s.centered = false
+	s.position = at
+	# 규격이 달라도 지정 크기에 맞춰 늘린다 (유저가 대충 그려도 채워지게)
+	var tex_sz := s.texture.get_size()
+	if tex_sz.x > 0 and tex_sz.y > 0:
+		s.scale = Vector2(sz.x / tex_sz.x, sz.y / tex_sz.y)
+	root.add_child(s)
+	return true
+
 func _build_field(f: int) -> void:
 	for c in field_root.get_children():
 		c.queue_free()
@@ -510,14 +532,18 @@ func _build_field(f: int) -> void:
 	last_field = f
 	Game.current_field = f
 	var tint: Color = Game.FIELD_TINTS[f]
-	_repeat_sprite(field_root, "res://assets/Tiles/Grass_Middle.png", Rect2(0, 0, ROOM.x - VILLAGE_W, ROOM.y), Vector2(VILLAGE_W, 0), tint)
-	var decor_tex := "res://assets/objects/forest.png" if f <= 1 else "res://assets/objects/hill.png"
-	var decor_n := 10 if f == 1 else 5
-	if f == 4:
-		decor_tex = "res://assets/objects/tower.png"
-		decor_n = 4
-	for i in decor_n:
-		_decor(field_root, decor_tex, Vector2(randf_range(260, 560), randf_range(48, 316)), tint)
+	var field_sz := Vector2(ROOM.x - VILLAGE_W, ROOM.y)
+	if _custom_bg(field_root, "res://assets/maps/field_%d.png" % f, Vector2(VILLAGE_W, 0), field_sz):
+		pass  # 유저 맵 사용 — 절차 잔디·장식 생략 (몬스터/오브젝트만 얹는다)
+	else:
+		_repeat_sprite(field_root, "res://assets/Tiles/Grass_Middle.png", Rect2(0, 0, field_sz.x, field_sz.y), Vector2(VILLAGE_W, 0), tint)
+		var decor_tex := "res://assets/objects/forest.png" if f <= 1 else "res://assets/objects/hill.png"
+		var decor_n := 10 if f == 1 else 5
+		if f == 4:
+			decor_tex = "res://assets/objects/tower.png"
+			decor_n = 4
+		for i in decor_n:
+			_decor(field_root, decor_tex, Vector2(randf_range(260, 560), randf_range(48, 316)), tint)
 	# 밤 시야 (v3.4 §B-4) — 용사 중심 원형 시야만 밝고 바깥은 근암전. 마을은 전체 조명 유지
 	_night_shade = Control.new()
 	_night_shade.position = Vector2(VILLAGE_W, 0)
@@ -1201,6 +1227,9 @@ func _on_bump(node: Node2D) -> void:
 			_bump_scarecrow(it)
 		"guide":
 			_bump_guide(it)
+		"gearshop":
+			Sfx.play("bump")
+			hud.open_gearshop()
 		"cheatpot":
 			_cheat_gold(it)
 		"bank":
@@ -1358,17 +1387,29 @@ func _bump_chief() -> void:
 		return
 	hud.open_chief()
 
+func _set_marker(key: String, on: bool, coin: bool) -> void:
+	if base_nodes.has(key) and is_instance_valid(base_nodes[key]):
+		base_nodes[key].set_alert(on, coin)
+
 func _update_chief_alert() -> void:
-	# v4.0 §B-1: "!" = 지금 실행 가능한 일 — 골드가 차오르면 마을 곳곳에 느낌표가 켜진다
+	# v4.3: 마커 두 종류 — 부탁/해금은 "!"(퀘스트), 그냥 살 수 있으면 코인(쇼핑)
 	if base_nodes.has("chief") and is_instance_valid(base_nodes["chief"]):
-		base_nodes["chief"].show_alert = (not Game.ui_unlocked["desc"]) \
-			or (not Game.ui_unlocked["quest"] and Game.gold >= 50) \
-			or (Game.ui_unlocked["quest"] and hud.can_shop("chief"))
-	for key in ["inn", "church", "shop", "smith", "train", "stable", "bank", "weaponshop", "board"]:
-		if base_nodes.has(key) and is_instance_valid(base_nodes[key]):
-			base_nodes[key].show_alert = hud.marker_on(key)
+		var quest: bool = (not Game.ui_unlocked["desc"]) or (not Game.ui_unlocked["quest"] and Game.gold >= 50)
+		# 촌장 부탁(주민 영입 가능) = "!", 건설만 가능 = 코인
+		var has_ask := false
+		if Game.ui_unlocked["quest"]:
+			for r in candidate_residents():
+				var c: Dictionary = r["cond"]
+				if c.has("gold") and (not c.has("lv") or Game.level >= int(c["lv"])) and Game.gold >= int(c["gold"]):
+					has_ask = true
+		if quest or has_ask:
+			base_nodes["chief"].set_alert(true, false)   # "!" 퀘스트
+		else:
+			base_nodes["chief"].set_alert(Game.ui_unlocked["quest"] and hud.marker_on("chief"), true)  # 코인
+	for key in ["inn", "church", "shop", "smith", "train", "stable", "bank", "weaponshop", "board", "gearshop"]:
+		_set_marker(key, hud.marker_on(key), true)  # 건물 구매 = 코인
 	if base_nodes.has("scarecrow") and is_instance_valid(base_nodes["scarecrow"]):
-		base_nodes["scarecrow"].show_alert = base_nodes["scarecrow"].is_ready
+		base_nodes["scarecrow"].set_alert(base_nodes["scarecrow"].is_ready, false)  # 준비 완료 = "!"
 
 func _bump_warehouse(it: Interactable) -> void:
 	if Game.opened["warehouse"]:
@@ -1438,8 +1479,15 @@ func _bump_monster(m: FieldMonster) -> void:
 		elite["exp"] = int(elite["exp"] * 2.5)
 		defs = [elite]
 	else:
-		for i in count:
-			defs.append(m.def)
+		defs.append(m.def)  # 처음 한 마리는 부딪힌 그 몬스터
+		var unlocked: int = Game.posters_f[last_field] if last_field < 4 else 3
+		for i in range(1, count):
+			# v4.3: 서로 다른 종류가 섞여 나올 수 있다 (40%). 섞이면 전투창이 그라데이션
+			if unlocked >= 1 and randf() < 0.4:
+				var other := randi_range(0, unlocked)
+				defs.append(_field_def(last_field, other, m.position.x + randf_range(-30, 30)))
+			else:
+				defs.append(m.def)
 	m.queue_free()
 	_open_battle(defs, false, spawn_at)
 
@@ -1513,10 +1561,12 @@ func _bump_recruit(it: Interactable) -> void:
 	var cls := it.recruit_cls
 	Game.own_companion(cls)
 	Sfx.play("fanfare_big")
+	var nm: String = Game.CLASS_DEFS[cls]["name"]
+	hud.speech_bubble("%s: 「함께 가겠소!」" % nm, it.global_position + Vector2(0, -20), 3.0)
 	if Game.party_ids.has(cls):
-		hud.event("%s이(가) 일행에 합류했다!" % Game.CLASS_DEFS[cls]["name"], 3.5)
+		hud.event("%s이(가) 일행에 합류했다!" % nm, 3.5)
 	else:
-		hud.event("%s이(가) 동료가 됐다! 자리가 없어 여관에서 기다린다. (파티 편성)" % Game.CLASS_DEFS[cls]["name"], 4.5)
+		hud.event("%s이(가) 동료가 됐다! 자리가 없어 여관에서 기다린다. (파티 편성)" % nm, 4.5)
 	it.queue_free()
 	Game.save_game()
 
@@ -1614,6 +1664,7 @@ func join_resident(r: Dictionary) -> void:
 		if b == "" or not (base_nodes.has(b) and is_instance_valid(base_nodes[b])):
 			_place_resident(r, true)
 		Sfx.play("build")
+		hud.speech_bubble("「%s」" % String(r["join"]), BUILD_POS.get(r["building"], Vector2(108, 300)) + Vector2(12, -18), 3.5)
 		hud.event(r["join"], 4.0)
 		_resident_companion(r["id"])
 		_check_revival()
@@ -1893,6 +1944,7 @@ func _try_spawn_golden() -> void:
 		hud.event("은빛 슬라임…?! 밤에만 나타나는 놈이다!", 4.0)
 	Game.golden_first_done = true
 	var interval := randf_range(150.0, 300.0) * (0.5 if Game.golden_info else 1.0)
+	interval /= (1.0 + 0.4 * Game.up["golden_hands"])  # v4.3: 손길 업글 = 더 자주
 	if Game.medal_on("metal_crown"):
 		interval *= 0.4
 	_golden_timer = interval
@@ -1963,9 +2015,9 @@ func on_posters_complete(field: int) -> void:
 	Sfx.play("boss")
 	if last_field == field and boss_node != null and is_instance_valid(boss_node) and boss_node.asleep:
 		boss_node.wake_up()
-		hud.event("결계가 깨졌다. 최심부에서 지배자가 깨어난다…", 4.0)
+		hud.event("지배자의 소굴을 알아냈다! 최심부에서 놈이 모습을 드러낸다…", 4.0)
 	else:
-		hud.event("%s의 지배자가 깨어났다는 소문이다…" % Game.FIELD_NAMES[field], 4.0)
+		hud.event("%s의 지배자가 사는 곳을 알아냈다는 소문이다…" % Game.FIELD_NAMES[field], 4.0)
 
 func _start_boss_battle(m: FieldMonster) -> void:
 	if boss_fighting:

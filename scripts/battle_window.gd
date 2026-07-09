@@ -269,17 +269,33 @@ func _type_tick(delta: float) -> void:
 var _card_sb: StyleBoxFlat = null
 var _frame_sb: StyleBoxFlat = null
 
-func _card_color() -> Color:
-	# 몬스터 계열색 (§B) — 보스는 살짝 어둡게 눌러 위압감
-	var fam := "slime"
-	if sim != null and not sim.enemies.is_empty():
-		fam = String(sim.enemies[0].get("family", "slime"))
-	var c := UILib.family_color(fam)
+func _tone(c: Color) -> Color:
 	if is_boss:
 		c = c.darkened(0.25)
 	if Game.is_night():
 		c = c.darkened(0.15)
 	return c
+
+func _card_color() -> Color:
+	# 몬스터 계열색 (§B) — 보스는 살짝 어둡게 눌러 위압감
+	var fam := "slime"
+	if sim != null and not sim.enemies.is_empty():
+		fam = String(sim.enemies[0].get("family", "slime"))
+	return _tone(UILib.family_color(fam))
+
+func _family_colors() -> Array:
+	# v4.3: 창 안 적들의 계열색 (등장 순서 유지, 중복 제거). 2종 이상이면 배경 그라데이션
+	var out: Array = []
+	var seen := {}
+	if sim != null:
+		for e in sim.enemies:
+			var f := String(e.get("family", "slime"))
+			if not seen.has(f):
+				seen[f] = true
+				out.append(_tone(UILib.family_color(f)))
+	if out.is_empty():
+		out.append(_tone(UILib.family_color("slime")))
+	return out
 
 func _draw() -> void:
 	# 무테 유색 카드 — 라운드 + 하단 그림자 (필드 위에 떠 있는 카드)
@@ -292,8 +308,17 @@ func _draw() -> void:
 		_card_sb.shadow_color = Color(0.102, 0.11, 0.173, 0.55)
 		_card_sb.shadow_size = 2
 		_card_sb.shadow_offset = Vector2(0, 2)
-	_card_sb.bg_color = _card_color()
+	var cols := _family_colors()
+	_card_sb.bg_color = cols[0]
 	draw_style_box(_card_sb, Rect2(Vector2.ZERO, size))
+	# v4.3: 적이 섞이면 계열색 가로 그라데이션 (per-vertex 색). 테두리 1px 안쪽에 얹는다
+	if cols.size() >= 2:
+		var a: Color = cols[0]
+		var b: Color = cols[cols.size() - 1]
+		var r := Rect2(1.5, 1.5, size.x - 3.0, size.y - 3.0)
+		draw_polygon(
+			PackedVector2Array([r.position, Vector2(r.end.x, r.position.y), r.end, Vector2(r.position.x, r.end.y)]),
+			PackedColorArray([a, b, b, a]))
 	# 텍스트 존 — 하단 1/3에 반투명 남색 띠 (어느 계열색 위에서도 읽히게)
 	var strip_h := size.y / 3.0
 	draw_rect(Rect2(Vector2(0, size.y - strip_h), Vector2(size.x, strip_h)), Color(0.102, 0.11, 0.173, 0.78), true)

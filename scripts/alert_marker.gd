@@ -5,6 +5,10 @@ extends Node2D
 
 var _t := 0.0
 var top_y := -30.0   # 마커가 뜰 높이 (오브젝트가 지정)
+var coin_mode := false:  # v4.3: false="!"(퀘스트) / true=코인(구매 가능)
+	set(v):
+		coin_mode = v
+		queue_redraw()
 
 func _ready() -> void:
 	z_index = 3000
@@ -16,10 +20,20 @@ func _process(delta: float) -> void:
 		queue_redraw()
 
 func _draw() -> void:
-	# 금색 느낌표 — 통통 튀는 2프레임 느낌 (전 오브젝트 1종 통일)
-	var ca := 0.75 + 0.25 * sin(_t * 4.0)
+	var ca := 0.8 + 0.2 * sin(_t * 4.0)
 	var cy := top_y - (2.0 if fmod(_t, 0.5) < 0.25 else 0.0)
-	# 얇은 그림자(가독성) + 금색 본체
-	draw_rect(Rect2(-2, cy + 1, 4, 8), Color(0, 0, 0, 0.35 * ca), true)
-	draw_rect(Rect2(-2, cy, 4, 8), Color(1.0, 0.83, 0.29, ca), true)
-	draw_rect(Rect2(-2, cy + 10, 4, 3), Color(1.0, 0.83, 0.29, ca), true)
+	if coin_mode:
+		# v4.3: 금색 코인 — "여기서 뭔가 살 수 있다" (동전으로 또렷이 읽히게)
+		var cc := Vector2(0, cy + 6.0)
+		draw_circle(cc + Vector2(0, 1.0), 6.0, Color(0, 0, 0, 0.3 * ca))        # 그림자
+		draw_circle(cc, 6.0, Color(0.72, 0.55, 0.12, ca))                      # 테두리(어두운 금)
+		draw_circle(cc, 4.4, Color(1.0, 0.83, 0.29, ca))                       # 금 본체
+		# 통화 표시 — 짧은 세로 막대(동전 안). 바처럼 안 보이게 원 안에 가둔다
+		draw_rect(Rect2(cc.x - 0.8, cc.y - 2.4, 1.6, 4.8), Color(0.55, 0.4, 0.1, ca), true)
+		var gl := 0.5 + 0.5 * sin(_t * 6.0)
+		draw_circle(cc + Vector2(-2.0, -1.8), 1.1, Color(1, 1, 0.9, 0.9 * gl))  # 하이라이트
+	else:
+		# 금색 느낌표 — 퀘스트(부탁/해금/준비 완료)
+		draw_rect(Rect2(-2, cy + 1, 4, 8), Color(0, 0, 0, 0.35 * ca), true)
+		draw_rect(Rect2(-2, cy, 4, 8), Color(1.0, 0.83, 0.29, ca), true)
+		draw_rect(Rect2(-2, cy + 10, 4, 3), Color(1.0, 0.83, 0.29, ca), true)

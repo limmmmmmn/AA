@@ -121,6 +121,41 @@ func _run() -> void:
 	assert(main.hud._event_label.text.contains("즉시 교체"))  # 대기 없이 새 대사로
 	assert(main.hud._event_label.visible_characters >= 0)     # 타자기 진행 중
 	main.hud.event("")  # 정리
+
+	# v4.3-A: 황금 슬라임 = 손길 업글 없이도 처음부터 포획된다
+	assert(Game.up["golden_hands"] == 0)
+	var gw = main.windows[0] if main.windows.size() > 0 else null
+	if gw != null and not gw.sim.finished:
+		gw.sim.spawn_golden(10.0)
+		var captured := [false]
+		gw.sim.golden_captured.connect(func(_r): captured[0] = true, CONNECT_ONE_SHOT)
+		for i in 60:
+			gw.sim.rub_golden(0.05)
+		assert(captured[0])  # golden_hands 0인데도 붙잡혔다
+	print("[SMOKE] 황금 무해금 포획 OK")
+
+	# v4.3-B: 방어력 = 장비/레벨로 피해 경감 (설원 보스 공략의 열쇠)
+	assert(Game.member_def(0) > 0)                 # 레벨만으로도 방어가 붙는다
+	var raw_dmg := 100
+	var before_def := Game.mitigate(0, raw_dmg)
+	Game.up["gear_def"] = 20
+	var after_def := Game.mitigate(0, raw_dmg)
+	assert(after_def < before_def)                 # 방어구를 사면 덜 맞는다
+	Game.up["gear_def"] = 0
+	# v4.3-C: 장비점 = 초반 강화 (무기 → 공격력)
+	var atk0 := Game.member_atk(0)
+	main.hud.open_gearshop()
+	main.hud._buy_up("gear_atk", int(15 * pow(1.28, 0)), "gearshop")
+	main.hud.close_menu()
+	assert(Game.up["gear_atk"] == 1 and Game.member_atk(0) > atk0)
+	# v4.3-D: 적 혼합 → 전투창 계열색 2종 (그라데이션)
+	var mixdef: Dictionary = Game.MONSTER_DEFS[1].duplicate()  # 박쥐(beast)
+	main._open_battle([Game.MONSTER_DEFS[0], mixdef], false, Vector2(300, 120))
+	await get_tree().create_timer(0.2).timeout
+	var mixw = main.windows[main.windows.size() - 1]
+	assert(mixw._family_colors().size() >= 2)      # 섞이면 색이 둘 이상
+	mixw.close_after(0.0)
+	print("[SMOKE] 방어력/장비점/혼합 그라데이션 OK — def=%d" % Game.member_def(0))
 	print("[SMOKE] 전투/황금/적이름/대사전환 OK — gold=%d" % Game.gold)
 
 	# 4) 수배서 → 결계 해제 → 지배자 처치 → 열쇠/이정표/다음 필드
@@ -622,6 +657,26 @@ func _shots() -> void:
 		if is_instance_valid(w1) and not w1.is_boss:
 			w1.close_after(0.0)
 	await get_tree().create_timer(0.4).timeout
+
+	# v4.3: 적 혼합 → 배경 그라데이션 (슬라임 청록 + 박쥐 퍼플)
+	main._open_battle([Game.MONSTER_DEFS[0], Game.MONSTER_DEFS[1], Game.MONSTER_DEFS[0]], false, Vector2(320, 130))
+	await get_tree().create_timer(0.8).timeout
+	await _save_shot("shot_mixed.png")
+	for wm in main.windows.duplicate():
+		if is_instance_valid(wm) and not wm.is_boss:
+			wm.close_after(0.0)
+	await get_tree().create_timer(0.4).timeout
+	# v4.3: 장비점 메뉴
+	Game.add_gold(9000)
+	main.hud.open_gearshop()
+	await get_tree().create_timer(0.4).timeout
+	await _save_shot("shot_gearshop.png")
+	main.hud.close_menu()
+	# v4.3: 코인 마커 (구매 가능 건물) — 골드 충분 상태에서
+	Game._building_ack.clear()
+	main._update_chief_alert()
+	await get_tree().create_timer(0.4).timeout
+	await _save_shot("shot_coinmarkers.png")
 	# 툴팁 — 세로 쪼개짐 회귀 방지 (main._process 정지 → _update_hover가 set_hover 안 지움)
 	for w in main.windows.duplicate():
 		if is_instance_valid(w) and not w.is_boss:

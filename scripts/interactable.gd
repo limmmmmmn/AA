@@ -7,12 +7,18 @@ var passive := false      # 배회 중 자연 범프 대상인가 (항아리/상
 var is_ready := true      # 쿨타임 오브젝트용
 var recruit_cls := ""     # kind == recruit
 var resident_name := ""   # kind == resident (시설의 화신 — 마을에 서 있는 사람)
-var show_alert := false:  # 머리 위 "!" — v4.1: 독립 마커 노드가 그린다 (z-order 앞)
+var show_alert := false:  # 머리 위 마커 — v4.1: 독립 마커 노드가 그린다 (z-order 앞)
 	set(v):
 		show_alert = v
 		if _alert_node != null and is_instance_valid(_alert_node):
 			_alert_node.visible = v
 var _alert_node: AlertMarker = null
+
+func set_alert(on: bool, coin: bool) -> void:
+	# v4.3: 마커 종류 지정 — coin=true 는 쇼핑(코인), false 는 퀘스트("!")
+	show_alert = on
+	if _alert_node != null and is_instance_valid(_alert_node):
+		_alert_node.coin_mode = coin
 
 var _sprite: Sprite2D = null
 var _cd := 0.0
@@ -94,6 +100,9 @@ func _ready() -> void:
 		"guide":
 			_make_sprite("chief", Rect2())
 			_sprite.self_modulate = Color(0.6, 0.95, 1.0)  # 하늘빛 — 튜토리얼 안내원 (v4.1)
+		"gearshop":
+			_make_sprite("shop", Rect2())
+			_sprite.self_modulate = Color(1.0, 0.85, 0.55)  # 황토빛 — 장비점 (v4.3)
 		"recruit":
 			passive = false
 			var d: Dictionary = Game.CLASS_DEFS[recruit_cls]
@@ -379,6 +388,7 @@ func hover_name() -> String:
 		"lamppost": return "가로등"
 		"scarecrow": return "허수아비"
 		"guide": return "마을 안내원"
+		"gearshop": return "장비점"
 		"chief": return "촌장"
 		"castle": return "마왕성"
 		"sparkle": return "반짝이는 땅"
@@ -478,6 +488,8 @@ func flavor() -> String:
 			return "허수아비다. 두드리면 몸이 달아오른다. (Space)" if is_ready else "허수아비를 방금 두드렸다."
 		"guide":
 			return "마을 안내원이다. 궁금한 걸 물어보자. (Space)"
+		"gearshop":
+			return "장비점이다. 무기·방어구·신발·벨트를 산다. (Space)"
 		"rotoshield":
 			return "전설의 방패가 빛나고 있다…! (Space)"
 		"swordrock":
@@ -512,7 +524,7 @@ func pick_radius() -> float:
 		"sparkle": return 12.0
 		"fountain": return 14.0
 		"bank": return 22.0
-		"train", "stable": return 24.0
+		"train", "stable", "gearshop": return 24.0
 		"lamppost": return 10.0
 		"guide": return 16.0
 		"scarecrow": return 12.0

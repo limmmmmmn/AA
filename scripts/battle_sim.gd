@@ -265,7 +265,8 @@ func _enemy_act(i: int) -> void:
 	enemy_acted.emit(i)
 	# v3.6: 맞는 쪽의 작전이 피격량을 정한다 (목숨을 소중히 = 그 사람만 덜 맞는다)
 	var tt: String = Game.member_tactic_of(String(Game.members[t]["cls"]), window_tactic)
-	var dmg := int(maxf(1.0, e["atk"] * randf_range(0.8, 1.2) * tactic_in_mult(tt)))
+	var raw := int(maxf(1.0, e["atk"] * randf_range(0.8, 1.2) * tactic_in_mult(tt)))
+	var dmg := Game.mitigate(t, raw)  # v4.3: 방어력으로 피해 경감
 	line.emit("%s의 공격!" % display_name(e))
 	Game.damage_member(t, dmg)
 	var fell: bool = Game.members[t]["ghost"]
@@ -343,20 +344,18 @@ func spawn_golden(duration: float, silver: bool = false) -> void:
 		return
 	golden_active = true
 	golden_silver = silver
-	# 황금의 손길 미해금 — 약만 올리고 금방 도망간다 (v3.1 §B-7-3)
-	golden_timer = duration if Game.up["golden_hands"] > 0 else 4.0
+	# v4.3: 처음부터 붙잡을 수 있다. 손길 업글은 도주까지 시간을 벌어 준다 (+2초/lv)
+	golden_timer = duration + 2.0 * Game.up["golden_hands"]
 	golden_gauge = 0.0
 	line.emit("%s 슬라임이" % ("은빛" if silver else "황금"))
 	line.emit("나타났다!")
-	if Game.up["golden_hands"] == 0:
-		line.emit("…하지만 아직")
-		line.emit("붙잡을 방법이 없다!")
 	golden_spawned.emit()
 
 func rub_golden(amount: float) -> void:
-	if not golden_active or Game.up["golden_hands"] == 0:
+	if not golden_active:
 		return
-	golden_gauge += amount
+	# v4.3: 손길 업글은 문지를 때 더 빨리 찬다 (+25%/lv)
+	golden_gauge += amount * (1.0 + 0.25 * Game.up["golden_hands"])
 	if golden_gauge >= 1.0:
 		golden_active = false
 		# 은빛(밤)은 경험치를, 황금(낮)은 골드를 남긴다 (v3.2 §B-5)
