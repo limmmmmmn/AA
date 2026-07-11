@@ -16,6 +16,14 @@ var is_boss := false
 var boss_name := ""
 var asleep := false           # 지배자 — 수배서 3장 전까지 잠들어 있다
 var bump_cd := 0.0
+var engaged := false             # BattleInstance에 이미 배정된 적은 중복 인카운트 불가
+var encounter_profile_id := ""
+var enemy_family := ""
+var threat_rank := 1
+var group_size := 1
+var rare_variant := ""
+var flee_from: Node2D = null
+var _rare_lifetime := 18.0
 
 var _sprite: Sprite2D
 var _anchor := Vector2.ZERO
@@ -23,11 +31,16 @@ var _move_target := Vector2.ZERO
 var _wait := 0.0
 var _bob_t := 0.0
 
-func setup(p_def: Dictionary, p_tier: int, boss: bool = false, p_boss_name: String = "") -> void:
+func setup(p_def: Dictionary, p_tier: int, boss: bool = false, p_boss_name: String = "", p_group_size: int = 1, p_rare_variant: String = "") -> void:
 	def = p_def
 	tier = p_tier
 	is_boss = boss
 	boss_name = p_boss_name
+	encounter_profile_id = String(p_def.get("id", "enemy"))
+	enemy_family = String(p_def.get("family", "unknown"))
+	threat_rank = maxi(1, int(p_def.get("hp", 1)) + int(p_def.get("atk", 1)) * 4)
+	group_size = maxi(1, p_group_size)
+	rare_variant = p_rare_variant
 	add_to_group("monster")
 	add_to_group("hoverable")
 
@@ -41,10 +54,12 @@ func _ready() -> void:
 	add_child(_sprite)
 	if def.has("tint"):
 		_sprite.self_modulate = def["tint"]
+	if rare_variant == "golden":
+		_sprite.self_modulate = Color(1.8, 1.45, 0.25)
 	if asleep:
 		modulate = Color(0.5, 0.5, 0.6)
 	_bob_t = randf() * TAU
-	_wait = randf_range(0.5, 3.0)
+	_wait = 0.25 if rare_variant == "golden" else randf_range(0.5, 3.0)
 
 func _draw() -> void:
 	# 지배자의 결계 — 평소에도 "언젠가 깰 저것"이 시야에 있다 (v3.0 §B-4)
@@ -52,6 +67,11 @@ func _draw() -> void:
 		var a := 0.35 + 0.15 * sin(_bob_t * 0.7)
 		draw_arc(Vector2(0, -10), 22.0, 0, TAU, 24, Color(0.7, 0.4, 0.95, a), 1.5)
 		draw_arc(Vector2(0, -10), 26.0, 0, TAU, 6, Color(0.7, 0.4, 0.95, a * 0.5), 1.0)
+	if not is_boss and group_size > 1:
+		# 전투창에 들어갈 수를 필드에서 먼저 약속한다.
+		draw_circle(Vector2(8, -25), 7.0, Color(0.08, 0.09, 0.14, 0.9))
+		draw_string(ThemeDB.fallback_font, Vector2(4, -22), "×%d" % group_size,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 8, Color(1.0, 0.85, 0.35))
 
 func _process(delta: float) -> void:
 	bump_cd = maxf(0.0, bump_cd - delta)
@@ -61,6 +81,26 @@ func _process(delta: float) -> void:
 		if asleep:
 			queue_redraw()  # 결계 일렁임
 		return  # 보스는 자리를 지킨다
+	if rare_variant == "golden":
+		_rare_lifetime -= delta
+		if _rare_lifetime <= 0.0:
+			queue_free()
+			return
+		if flee_from != null and is_instance_valid(flee_from):
+			var away := position - flee_from.global_position
+			_wait -= delta
+			if away.length() < 130.0 and _wait <= 0.0:
+				# 방향 전환에 짧은 결정을 둬 직선 속도가 빨라도 코너에서 잡을 수 있다.
+				_wait = 0.22
+				_move_target = position + away.normalized() * 90.0 if away.length() > 1.0 else position + Vector2.RIGHT * 90.0
+				_move_target = _move_target.clamp(Vector2(236, 40), Vector2(620, 320))
+		var flee_delta := _move_target - position
+		if flee_delta.length() > 2.0:
+			position += flee_delta.normalized() * (Game.move_speed() + 15.0) * delta
+			_sprite.flip_h = flee_delta.x < 0.0
+		if position.x <= 236.5 or position.x >= 619.5:
+			queue_free()
+		return
 	_wait -= delta
 	if _wait <= 0.0:
 		_wait = randf_range(1.5, 4.5)
@@ -102,7 +142,10 @@ func kind_key() -> String:
 	return "boss_" + str(tier) if is_boss else "mon_" + String(def.get("id", "slime"))
 
 func hover_name() -> String:
-	return boss_name if is_boss else String(def.get("name", "몬스터"))
+	if is_boss: return boss_name
+	if rare_variant == "golden": return "황금 슬라임"
+	var base_name := String(def.get("name", "몬스터"))
+	return "%s 무리 ×%d" % [base_name, group_size] if group_size > 1 else base_name
 
 func flavor() -> String:
 	if is_boss:

@@ -69,6 +69,13 @@ func apply_volumes() -> void:
 		AudioServer.set_bus_volume_db(bi, sfx_db + 8.0 + (2.0 if bus_name == "Jingle" else 0.0))
 		AudioServer.set_bus_mute(bi, sfx_db <= -79.0)
 
+func shutdown_for_test() -> void:
+	for player in _pool + _fanfare_pool + [_gaze_player, _bgm_player]:
+		if player != null:
+			player.stop()
+			player.stream = null
+	_streams.clear()
+
 func gaze_loop(on: bool) -> void:
 	# 주시 중 반짝이는 루프음 — 켜진 창이 하나라도 있으면 재생 (v3.1 §B-7-1)
 	_gaze_count = maxi(0, _gaze_count + (1 if on else -1))

@@ -13,6 +13,7 @@ var _active_is_a := true
 var _current := ""
 var _want := ""
 var _thread: Thread = null
+var _fade_tween: Tween = null
 
 # 상태 (우선순위: 타이틀 > 보스 > 카지노 > 필드)
 var _st_title := false
@@ -34,8 +35,23 @@ func _ready() -> void:
 	_thread.start(_generate_all)
 
 func _exit_tree() -> void:
+	shutdown_for_test()
+
+func shutdown_for_test() -> void:
 	if _thread != null and _thread.is_started():
 		_thread.wait_to_finish()
+	if _fade_tween != null and _fade_tween.is_valid():
+		_fade_tween.kill()
+	_fade_tween = null
+	_want = ""
+	_current = ""
+	if _a != null:
+		_a.stop()
+		_a.stream = null
+	if _b != null:
+		_b.stop()
+		_b.stream = null
+	_tracks.clear()
 
 # ---------------------------------------------------------------- 외부 API
 
@@ -102,11 +118,13 @@ func _try_play(fade := 0.8) -> void:
 	to.stream = _tracks[_current]
 	to.volume_db = -80.0
 	to.play()
-	var tw := create_tween()
-	tw.set_parallel(true)
-	tw.tween_property(to, "volume_db", -6.0, fade)
-	tw.tween_property(from, "volume_db", -80.0, fade)
-	tw.chain().tween_callback(from.stop)
+	if _fade_tween != null and _fade_tween.is_valid():
+		_fade_tween.kill()
+	_fade_tween = create_tween()
+	_fade_tween.set_parallel(true)
+	_fade_tween.tween_property(to, "volume_db", -6.0, fade)
+	_fade_tween.tween_property(from, "volume_db", -80.0, fade)
+	_fade_tween.chain().tween_callback(from.stop)
 
 func _register(name: String, stream: AudioStreamWAV) -> void:
 	_tracks[name] = stream

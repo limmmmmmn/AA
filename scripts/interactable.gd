@@ -2,7 +2,9 @@ class_name Interactable
 extends Node2D
 ## 마을/필드 오브젝트 — 항아리, 상자, 건물, NPC, 반짝이(발굴), 영입 대기 동료
 
-var kind := ""            # pot / chest / inn / smith / church / board / chief / signpost / sparkle / recruit / warehouse / redchest / resident / fountain …
+@export var building_texture: Texture2D
+
+var kind := ""            # pot / chest / inn / smith / church / board / chief / signpost / sparkle / recruit / resident / fountain …
 var passive := false      # 배회 중 자연 범프 대상인가 (항아리/상자/반짝이)
 var is_ready := true      # 쿨타임 오브젝트용
 var recruit_cls := ""     # kind == recruit
@@ -78,14 +80,15 @@ func _ready() -> void:
 			_sprite.self_modulate = Color(0.45, 0.4, 0.55)
 		"gate":
 			_make_sprite("gate", Rect2())
-		"exit", "signpost", "warehouse", "fountain", "bank", "frogstatue", "swordrock", "home", "well", "rotoshield":
+		"exit", "signpost", "fountain", "bank", "frogstatue", "swordrock", "home", "well", "rotoshield":
 			pass  # _draw로 그린다 (임시 도형)
 		"mom":
 			_make_sprite("chief", Rect2())
 			_sprite.self_modulate = Color(1.05, 0.8, 0.85)  # 임시 — 엄마는 분홍 톤
-		"redchest":
+		"treasure":
 			_make_sprite("chest", Rect2(0, 0, 16, 18))
-			_sprite.self_modulate = Color(1.0, 0.45, 0.45)  # 붉은 상자 — 마법의 열쇠로만
+		"potzone", "digsite", "tactics":
+			pass
 		"resident":
 			# 주민 — 시설과 사건을 세계 안에서 보여 주는 서사적 주체
 			_make_sprite("chief", Rect2())
@@ -96,9 +99,6 @@ func _ready() -> void:
 		"guide":
 			_make_sprite("chief", Rect2())
 			_sprite.self_modulate = Color(0.6, 0.95, 1.0)  # 하늘빛 — 튜토리얼 안내원 (v4.1)
-		"gearshop":
-			_make_sprite("shop", Rect2())
-			_sprite.self_modulate = Color(1.0, 0.85, 0.55)  # 황토빛 — 장비점 (v4.3)
 		"recruit":
 			passive = false
 			var d: Dictionary = Game.CLASS_DEFS[recruit_cls]
@@ -113,6 +113,13 @@ func _ready() -> void:
 			pass  # _draw로 그린다
 		"lamppost", "scarecrow":
 			pass  # _draw로 그린다 (v4.0 기물)
+	if kind in ["inn", "shop", "smith", "church", "casino", "weaponshop", "train", "stable", "castle"] and _sprite != null:
+		if building_texture != null:
+			_sprite.texture = building_texture
+		var texture_size := _sprite.texture.get_size()
+		if texture_size.x > 0.0 and texture_size.y > 0.0:
+			_sprite.scale = Vector2(32.0 / texture_size.x, 32.0 / texture_size.y)
+			_sprite.offset = Vector2(0, -texture_size.y / 2.0)
 	if kind == "sparkle":
 		passive = true
 	# v4.1: "!" 마커 = 독립 노드 (높은 z_index로 이웃 건물보다 항상 앞)
@@ -138,7 +145,7 @@ func _process(delta: float) -> void:
 		_cd -= delta
 		if _cd <= 0.0:
 			_set_ready(true)
-	if kind in ["sparkle", "board", "casino", "bard", "smith", "exit", "gate", "chief", "signpost", "warehouse", "redchest", "fountain", "medalking", "bank", "frogstatue", "swordrock", "home", "well", "rotoshield", "lamppost", "scarecrow"]:
+	if kind in ["sparkle", "board", "casino", "bard", "smith", "exit", "gate", "chief", "signpost", "fountain", "medalking", "bank", "frogstatue", "swordrock", "home", "well", "rotoshield", "lamppost", "scarecrow", "potzone", "digsite", "tactics"]:
 		queue_redraw()
 	if kind == "recruit":
 		_sprite.position.y = -absf(sin(_t * 3.0)) * 2.0
@@ -187,6 +194,14 @@ func _draw() -> void:
 			draw_circle(Vector2(0, -19), 3.0, Color("d8c890"))
 			var hy := -23.0 - (absf(sin(_t * 4.0)) * 1.5 if is_ready else 0.0)
 			draw_rect(Rect2(-4, hy, 8, 2), Color("8a5a30") if is_ready else Color("5a4a38"), true)
+		"potzone":
+			draw_rect(Rect2(-12, -20, 24, 20), Color("8a6a42"), true)
+			draw_string(ThemeDB.fallback_font, Vector2(-8, -7), "POT", HORIZONTAL_ALIGNMENT_LEFT, -1, 7, Color("f4f0e0"))
+		"digsite":
+			draw_colored_polygon(PackedVector2Array([Vector2(-15, 0), Vector2(15, 0), Vector2(10, -16), Vector2(-8, -20)]), Color("6b5140"))
+		"tactics":
+			draw_rect(Rect2(-16, -26, 32, 26), Color("34405c"), true)
+			draw_line(Vector2(-10, -19), Vector2(10, -7), Color("f5c542"), 1.0)
 		"casino":
 			# 점멸하는 간판 전구 (임시 도형)
 			for i in 5:
@@ -225,25 +240,6 @@ func _draw() -> void:
 			draw_colored_polygon(PackedVector2Array([Vector2(9, -18), Vector2(4, -21), Vector2(4, -15)]), Color(1.0, 0.9, 0.5, sa))
 			draw_rect(Rect2(-11, -13, 22, 6), Color("8a5a30"), true)
 			draw_rect(Rect2(-11, -13, 22, 6), Color("4a3018"), false, 1.0)
-		"warehouse":
-			# 잠긴 창고 — 시작부터 보이는데 못 여는 것 (임시 도형)
-			var opened_w: bool = Game.opened["warehouse"]
-			draw_rect(Rect2(-14, -22, 28, 22), Color("6a4a30"), true)
-			draw_rect(Rect2(-14, -22, 28, 22), Color("3a2818"), false, 1.5)
-			draw_rect(Rect2(-14, -26, 28, 5), Color("8a5a30"), true)
-			if opened_w:
-				draw_rect(Rect2(-5, -14, 10, 14), Color("1a1a24"), true)  # 열린 문
-			else:
-				draw_rect(Rect2(-5, -14, 10, 14), Color("4a3018"), true)
-				# 자물쇠
-				var la := 0.7 + 0.3 * sin(_t * 2.0)
-				draw_rect(Rect2(-3, -10, 6, 6), Color(0.85, 0.75, 0.3, la), true)
-				draw_arc(Vector2(0, -10), 2.5, PI, TAU, 8, Color(0.85, 0.75, 0.3, la), 1.5)
-		"redchest":
-			if not Game.opened["redchest"]:
-				var ra := 0.7 + 0.3 * sin(_t * 2.0)
-				draw_rect(Rect2(-2, -8, 5, 5), Color(0.85, 0.75, 0.3, ra), true)
-				draw_arc(Vector2(0, -8), 2.0, PI, TAU, 8, Color(0.85, 0.75, 0.3, ra), 1.5)
 		"fountain":
 			# 분수 — 마을 부흥의 증표 (임시 도형)
 			draw_circle(Vector2(0, -3), 9.0, Color("9aa0aa"))
@@ -263,7 +259,7 @@ func _draw() -> void:
 			# 은행 — 돌기둥 금고 (임시 도형, 나중에 png 교체)
 			draw_rect(Rect2(-16, -24, 32, 24), Color("b8b2a0"), true)
 			draw_rect(Rect2(-16, -24, 32, 24), Color("5a564a"), false, 1.5)
-			draw_colored_polygon(PackedVector2Array([Vector2(-18, -24), Vector2(18, -24), Vector2(0, -33)]), Color("d0c8b0"))
+			draw_colored_polygon(PackedVector2Array([Vector2(-16, -24), Vector2(16, -24), Vector2(0, -32)]), Color("d0c8b0"))
 			for i in 3:
 				draw_rect(Rect2(-12 + i * 9, -20, 4, 16), Color("8a8474"), true)
 			# 금화 표식
@@ -282,7 +278,7 @@ func _draw() -> void:
 			# 용사의 집 (v3.2 §B-6 — 프롤로그의 발원지, 임시 도형)
 			draw_rect(Rect2(-14, -20, 28, 20), Color("c8a878"), true)
 			draw_rect(Rect2(-14, -20, 28, 20), Color("6a5138"), false, 1.5)
-			draw_colored_polygon(PackedVector2Array([Vector2(-17, -20), Vector2(17, -20), Vector2(0, -31)]), Color("a05a3a"))
+			draw_colored_polygon(PackedVector2Array([Vector2(-16, -20), Vector2(16, -20), Vector2(0, -31)]), Color("a05a3a"))
 			draw_rect(Rect2(-4, -11, 8, 11), Color("5a3f28"), true)
 			draw_rect(Rect2(5, -17, 6, 5), Color(1.0, 0.95, 0.6) if is_ready else Color("3a3448"), true)  # 불 켜진 창
 			if is_ready:
@@ -377,14 +373,13 @@ func hover_name() -> String:
 		"inn": return "여관"
 		"shop": return "상점"
 		"smith": return "대장간"
-		"church": return "교회"
+		"church": return "성소"
 		"board": return "수배 게시판"
-		"train": return "훈련소"
+		"train": return "작전판"
 		"stable": return "마구간"
 		"lamppost": return "가로등"
 		"scarecrow": return "허수아비"
 		"guide": return "마을 안내원"
-		"gearshop": return "장비점"
 		"chief": return "촌장"
 		"castle": return "마왕성"
 		"sparkle": return "반짝이는 땅"
@@ -393,8 +388,6 @@ func hover_name() -> String:
 		"gate": return "성문"
 		"exit": return "귀환 이정표"
 		"signpost": return "행선지 이정표"
-		"warehouse": return "잠긴 창고"
-		"redchest": return "붉은 상자"
 		"fountain": return "분수"
 		"medalking": return "메달왕"
 		"resident": return resident_name
@@ -406,6 +399,10 @@ func hover_name() -> String:
 		"mom": return "엄마"
 		"well": return "우물"
 		"rotoshield": return "로토의 방패"
+		"potzone": return "항아리 구역"
+		"treasure": return "보물창고"
+		"digsite": return "발굴지"
+		"tactics": return "전술판"
 		"recruit": return Game.CLASS_DEFS[recruit_cls]["name"]
 	return kind
 
@@ -432,7 +429,7 @@ func flavor() -> String:
 		"exit":
 			return "기지로 돌아가는 길이다. (Space)"
 		"church":
-			return "교회다. 경건한 기운이 감돈다."
+			return "성소다. 회복과 축복을 맡는다."
 		"board":
 			return "수배 게시판. 위험한 놈들을 불러들일 수 있다."
 		"chief":
@@ -445,14 +442,6 @@ func flavor() -> String:
 			return "뭔가 묻혀 있는 것 같다…" if Game.up["shovel"] == 0 else "뭔가 묻혀 있다! 파 보자."
 		"signpost":
 			return "행선지 이정표. 필드를 갈아끼울 수 있다. (Space)"
-		"warehouse":
-			if Game.opened["warehouse"]:
-				return "창고다. 이제 텅 비었다."
-			return "잠긴 창고다. 도둑의 열쇠가 필요해 보인다."
-		"redchest":
-			if Game.opened["redchest"]:
-				return "붉은 상자다. 이미 열었다."
-			return "붉은 상자다. 마법의 열쇠가 필요해 보인다."
 		"fountain":
 			return "분수다. 마을이 살아났다는 증거."
 		"medalking":
@@ -472,7 +461,7 @@ func flavor() -> String:
 		"well":
 			return "우물이다. 들여다보고 싶다. (Space)" if is_ready else "우물. 방금 들여다봤다."
 		"train":
-			return "훈련소다. 기합 소리가 들린다."
+			return "작전판이다. 동시 전투 규모를 정한다."
 		"stable":
 			return "마구간이다. 여물 냄새가 난다."
 		"lamppost":
@@ -481,10 +470,12 @@ func flavor() -> String:
 			return "허수아비다. 두드리면 몸이 달아오른다. (Space)" if is_ready else "허수아비를 방금 두드렸다."
 		"guide":
 			return "마을 안내원이다. 궁금한 걸 물어보자. (Space)"
-		"gearshop":
-			return "장비점이다. 무기·방어구·신발·벨트를 산다. (Space)"
 		"rotoshield":
 			return "전설의 방패가 빛나고 있다…! (Space)"
+		"potzone": return "시간이 지나면 항아리가 다시 채워진다. (Space)"
+		"treasure": return "승리가 쌓일수록 더 좋은 상자가 열린다. (Space)"
+		"digsite": return "돼지와 광부가 땅속 보물을 찾는다. (Space)"
+		"tactics": return "동료·오의·훈장을 한곳에서 편성한다. (Space)"
 		"swordrock":
 			if Game.sword_rock >= 2:
 				return "검이 뽑힌 바위. 이야기는 이루어졌다."
@@ -513,11 +504,10 @@ func pick_radius() -> float:
 		"castle", "gate": return 28.0
 		"pot": return 12.0
 		"chest", "board", "chief", "recruit", "bard", "exit", "signpost", "medalking", "resident": return 16.0
-		"warehouse", "redchest": return 18.0
 		"sparkle": return 12.0
 		"fountain": return 14.0
 		"bank": return 22.0
-		"train", "stable", "gearshop": return 24.0
+		"train", "stable": return 24.0
 		"lamppost": return 10.0
 		"guide": return 16.0
 		"scarecrow": return 12.0

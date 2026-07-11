@@ -51,6 +51,38 @@ func setup(defs: Array, boss: bool) -> void:
 	_queue = [["intro"]]
 	_timer = 0.6  # 등장 텍스트는 바로
 
+func snapshot() -> Dictionary:
+	var saved_enemies: Array = []
+	for enemy in enemies:
+		saved_enemies.append({
+			"id": enemy.get("mid", ""), "name": enemy["name"], "family": enemy.get("family", "slime"),
+			"hp": enemy["hp"], "max_hp": enemy["max_hp"], "atk": enemy["atk"],
+			"gold": enemy["gold"], "exp": enemy["exp"], "tex": enemy["tex"], "scale": enemy.get("scale", 1.0),
+			"dead": enemy["dead"]})
+	return {"enemies": saved_enemies, "boss": is_boss, "timer": _timer, "queue": _queue,
+		"won_pending": _won_pending, "golden_active": golden_active, "golden_silver": golden_silver,
+		"golden_timer": golden_timer, "golden_gauge": golden_gauge, "tactic": window_tactic}
+
+func restore_snapshot(data: Dictionary) -> void:
+	var defs: Array = []
+	for enemy in data.get("enemies", []):
+		defs.append({"id": enemy.get("id", ""), "name": enemy["name"], "family": enemy.get("family", "slime"),
+			"hp": enemy["max_hp"], "atk": enemy["atk"], "gold": enemy["gold"], "exp": enemy["exp"],
+			"tex": enemy["tex"], "scale": enemy.get("scale", 1.0)})
+	setup(defs, bool(data.get("boss", false)))
+	for i in mini(enemies.size(), data.get("enemies", []).size()):
+		var saved: Dictionary = data["enemies"][i]
+		enemies[i]["hp"] = int(saved["hp"])
+		enemies[i]["dead"] = bool(saved["dead"])
+	_timer = float(data.get("timer", 0.0))
+	_queue = data.get("queue", [])
+	_won_pending = bool(data.get("won_pending", false))
+	golden_active = bool(data.get("golden_active", false))
+	golden_silver = bool(data.get("golden_silver", false))
+	golden_timer = float(data.get("golden_timer", 0.0))
+	golden_gauge = float(data.get("golden_gauge", 0.0))
+	window_tactic = String(data.get("tactic", ""))
+
 func display_name(e: Dictionary) -> String:
 	return String(e["name"]) + String(e["letter"])
 

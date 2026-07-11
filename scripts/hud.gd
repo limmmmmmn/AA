@@ -16,7 +16,7 @@ const AMBIENT_PAIRS := [
 	["마왕은 이미 이겼다.", "그래서 뭐 어떤가."],
 	["일행은 씩씩하게 걷고 있다.", "누군가는 졸면서."],
 	["돌아갈 곳이 있다는 건", "좋은 일이다."],
-	["마을에 서 있는 사람의 수가", "곧 진행바다."],
+	["쓴 골드와 구한 사람만큼", "마을 풍경이 자라난다."],
 ]
 
 var main: Node2D
@@ -60,6 +60,8 @@ var _holy_bar: ColorRect = null
 # 합체기 게이지 셀
 var _combo_cell: Control = null
 var _combo_fill: ColorRect = null
+var _speed_btn: Button = null
+var _debug_drawer: Control = null
 
 var _hover_text := ""
 var _menu_kind := ""
@@ -96,8 +98,20 @@ func _ready() -> void:
 	# 세이브에서 이미 태어난 UI는 연출 없이 바로 보여준다 (탄생은 최초 1회뿐)
 	if Game.ui_unlocked["gold"]:
 		_top_panel.visible = true
+	_speed_btn = UILib.make_button("×1", UILib.FS)
+	_speed_btn.position = Vector2(600, 8)
+	_speed_btn.size = Vector2(34, 24)
+	_speed_btn.tooltip_text = "전투 배속"
+	add_child(_speed_btn)
+	_speed_btn.pressed.connect(func():
+		if main != null:
+			main.battle_director.toggle_speed())
+	if main != null:
+		main.battle_director.speed_changed.connect(func(multiplier: int): _speed_btn.text = "×%d" % multiplier)
 
 func _process(delta: float) -> void:
+	if _speed_btn != null:
+		_speed_btn.visible = not _title_suppress
 	# 툴팁 (속삭임) — 커서 추종 (v3.7 §E)
 	var tip := _hover_text if _hover_text != "" else menu_hover
 	if tip != "" and not _title_suppress:
@@ -261,19 +275,26 @@ func toast(text: String, dur: float = 3.0) -> void:
 func show_bubble(_text: String, _screen_pos: Vector2) -> void:
 	pass  # 툴팁(_hover_text)이 대신한다 — 호환용 빈 함수
 
-func speech_bubble(text: String, world_pos: Vector2, dur: float = 3.0) -> void:
+func speech_bubble(text: String, world_pos: Vector2, dur: float = 3.0) -> DQPanel:
 	# v4.3: 머리 위 말풍선 — 월드 좌표(=화면 좌표, 뷰 고정)에 잠깐 뜬다
 	if _title_suppress:
-		return
+		return null
 	var b := DQPanel.new()
 	b.border_color = UILib.COL_GOLD
-	var lbl := UILib.make_rich(UILib.colorize(text), UILib.FS)
-	lbl.fit_content = true
+	# RichTextLabel의 fit_content를 폭 0에서 계산하면 한글이 한 글자씩 줄바꿈되어
+	# 화면 높이만 한 패널이 된다. 먼저 실제 폰트로 안전한 말풍선 크기를 확정한다.
+	var lbl := UILib.make_label(text, UILib.FS)
 	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	lbl.custom_minimum_size = Vector2(0, 0)
+	lbl.autowrap_mode = TextServer.AUTOWRAP_OFF
+	lbl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	b.add_child(lbl)
 	b.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_fx_root.add_child(b)
+	var font := lbl.get_theme_font("font")
+	var font_size := lbl.get_theme_font_size("font_size")
+	var natural_width := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
+	var content_width := clampf(ceil(natural_width), 48.0, 560.0)
+	lbl.custom_minimum_size = Vector2(content_width, ceil(font.get_height(font_size)))
 	b.reset_size()
 	b.position = world_pos - Vector2(b.size.x / 2.0, b.size.y + 6.0)
 	b.position.x = clampf(b.position.x, 2.0, 638.0 - b.size.x)
@@ -286,6 +307,7 @@ func speech_bubble(text: String, world_pos: Vector2, dur: float = 3.0) -> void:
 	tw.tween_interval(dur)
 	tw.tween_property(b, "modulate:a", 0.0, 0.3)
 	tw.tween_callback(b.queue_free)
+	return b
 
 func hide_bubble() -> void:
 	pass
@@ -893,7 +915,7 @@ func _menu_panel(title: String) -> VBoxContainer:
 	close_menu()
 	_menu_kind = kind
 	remote_open = remote
-	if kind in ["chief", "inn", "church", "shop", "train", "stable", "bank", "weaponshop", "board", "smith", "gearshop"]:
+	if kind in ["chief", "inn", "church", "shop", "train", "stable", "bank", "weaponshop", "board", "smith", "potzone", "treasure", "digsite"]:
 		_ack_shop(kind)  # v4.1: 방문 = 확인 → 마커 끔
 	# v3.4 §B-2: 커맨드 창 = 화면 좌측 고정 슬롯 1개, 동시 개방 1개
 	var p := UILib.make_panel(UILib.COL_GOLD)
@@ -955,8 +977,8 @@ func open_chief() -> void:
 	var title_txt := Game.current_title()
 	var head_txt := "촌장 — 마을의 모든 일" if title_txt == "" else "촌장 — 「%s」이시여…" % title_txt
 	var v := _menu_panel(head_txt)
-	# 부탁 — 주민 영입 후보 2~3명 동시 노출 (어느 부탁부터가 곧 선택)
-	v.add_child(UILib.make_label("— 부탁 (사람을 모으자) —", UILib.FS, UILib.COL_GOLD))
+	# 기지 외형은 플레이 결과로 자동 성장한다. 촌장은 부탁만 담당한다.
+	v.add_child(UILib.make_label("— 부탁 —", UILib.FS, UILib.COL_GOLD))
 	var cands: Array = main.candidate_residents()
 	if cands.is_empty():
 		v.add_child(UILib.make_label("모두 모였다. 마을은 완성됐다.", UILib.FS, UILib.COL_GRAY))
@@ -970,51 +992,32 @@ func open_chief() -> void:
 				func(): _chief_pay(r["id"]))
 		else:
 			_menu_row(v, String(r["name"]), String(r["ask"]), cond_txt, false, func(): pass)
-	# v4.0 §B-2/B-4: 촌장 = 부탁 + 건설 카탈로그 (수치 업글은 훈련소/마구간/상점으로 분업)
-	var blds: Array = []
-	var fixs: Array = []
-	for e in main.BUILD_CATALOG:
-		if main.catalog_built(e) or not main.catalog_unlocked(e):
-			continue
-		if e["cat"] == "building":
-			blds.append(e)
-		else:
-			fixs.append(e)
-	if not blds.is_empty():
-		v.add_child(UILib.make_label("— 건설: 건물 —", UILib.FS, UILib.COL_GOLD))
-		for e in blds:
-			_catalog_row(v, e)
-	if not fixs.is_empty() or Game.extra_pots < 3:
-		v.add_child(UILib.make_label("— 건설: 기물 —", UILib.FS, UILib.COL_GOLD))
-		for e in fixs:
-			_catalog_row(v, e)
-		if Game.extra_pots < 3:
-			var pc := int(30 * pow(2.2, Game.extra_pots))
-			_menu_row(v, "항아리 확충 %d/3" % Game.extra_pots, "광장에 항아리 +2", "%d G" % pc,
-				Game.gold >= pc, func(): _chief_add_pots(pc))
-	if blds.is_empty() and fixs.is_empty() and Game.extra_pots >= 3:
-		v.add_child(UILib.make_label("더 지을 것이 없다. 마을은 완성됐다.", UILib.FS, UILib.COL_GRAY))
-
-func _catalog_row(v: VBoxContainer, e: Dictionary) -> void:
-	var cost := int(e["cost"])
-	_menu_row(v, String(e["name"]), String(e["desc"]), "%d G" % cost,
-		Game.gold >= cost, func(): _chief_build(String(e["id"])))
-
-func _chief_build(id: String) -> void:
-	# 건설 → 메뉴 닫힘 → 건물 팝 + 입주 연출을 그대로 본다 (§B-4)
-	if main.buy_catalog(id):
-		close_menu()
-	else:
-		open_chief()
 
 func open_training() -> void:
-	# v4.0 §B-2: 훈련소 — 전선의 모든 것
+	# 작전판 — 전선 규모를 골드로 확장한다.
 	_menu_kind = "train"
-	var v := _menu_panel("훈련소 — \"전선은 넓을수록 좋다!\"")
-	_up_row(v, "win_cap", "전투창 확장", "동시 전투창 +1", 100, 2.2, 5, 2 + Game.up["win_cap"] * 2)
-	_up_row(v, "battle_speed", "전투 가속", "전투 턴 간격 -7%", 25, 1.22, 12, 0)
+	var v := _menu_panel("작전판 — \"전선은 넓을수록 좋다!\"")
+	_up_row(v, "win_cap", "전투창 확장", "동시 전투창 1→2→3→5→8→12→…→20", 100, 3.0, 9, 0)
 	_up_row(v, "density", "무리 유인", "창당 최대 적 = 편성 인원. 여기에 +1 보정", 160, 1.0, 1, 4)
 	_up_row(v, "flee", "퇴각 나팔", "주시 중인 전투창에서 도망칠 수 있다", 300, 1.0, 1, 3)
+
+func open_potzone() -> void:
+	_menu_kind = "potzone"
+	var v := _menu_panel("항아리 구역 — 다시 차오르는 잔돈")
+	_up_row(v, "pot_count", "항아리 수량", "마을 항아리 +1", 70, 1.7, 6, 0)
+	_up_row(v, "pot_regen", "재생 속도", "항아리 재생 시간 -14%", 90, 1.75, 6, 0)
+
+func open_treasure() -> void:
+	_menu_kind = "treasure"
+	var v := _menu_panel("보물창고 — 승리 충전 %d" % Game.treasure_wins)
+	_up_row(v, "treasure_need", "필요 승수", "상자 개봉 필요 승수 -10%", 500, 2.0, 5, 0)
+	_up_row(v, "treasure_grade", "상자 등급", "보물창고 골드 +25%", 650, 2.1, 5, 0)
+
+func open_digsite() -> void:
+	_menu_kind = "digsite"
+	var v := _menu_panel("발굴지 — 고전 JRPG의 땅 파기")
+	_up_row(v, "dig_count", "발굴 지점 수", "필드 발굴 지점 +1", 900, 1.9, 4, 0)
+	_up_row(v, "dig_luck", "희귀 확률", "발굴 골드·메달 확률 증가", 1200, 2.2, 3, 0)
 
 func open_stable() -> void:
 	# v4.0 §B-2: 마구간 — 발과 반경, 그리고 탈것
@@ -1039,18 +1042,13 @@ func _shop_sig(kind: String) -> String:
 	match kind:
 		"chief":
 			var parts: Array = []
-			for e in main.BUILD_CATALOG:
-				if not main.catalog_built(e) and main.catalog_unlocked(e) and Game.gold >= int(e["cost"]):
-					parts.append(String(e["id"]))
-			if Game.extra_pots < 3 and Game.gold >= int(30 * pow(2.2, Game.extra_pots)):
-				parts.append("pot%d" % Game.extra_pots)
 			for r in main.candidate_residents():
 				var c: Dictionary = r["cond"]
 				if c.has("gold") and (not c.has("lv") or Game.level >= int(c["lv"])) and Game.gold >= int(c["gold"]):
 					parts.append("ask:" + String(r["id"]))
 			return ",".join(parts)
 		"inn":
-			return "maxhp%d" % Game.up["max_hp"] if _can_up("max_hp", 30, 1.2, 9, 0) else ""
+			return "maxhp%d" % Game.up["max_hp"] if _can_up("max_hp", 30, 1.45, 99, 0) else ""
 		"church":
 			var cp: Array = []
 			if Game.ghost_count() > 0 and Game.gold >= Game.revive_cost():
@@ -1069,9 +1067,8 @@ func _shop_sig(kind: String) -> String:
 			return ",".join(sp)
 		"train":
 			var tp: Array = []
-			for uid in [["win_cap",100,2.2,5],["battle_speed",25,1.22,12],["density",160,1.0,1],["flee",300,1.0,1]]:
-				var gate: int = (2 + Game.up["win_cap"] * 2) if uid[0] == "win_cap" else 0
-				if _can_up(uid[0], uid[1], uid[2], uid[3], gate):
+			for uid in [["win_cap",100,3.0,9],["density",160,1.0,1],["flee",300,1.0,1]]:
+				if _can_up(uid[0], uid[1], uid[2], uid[3], 0):
 					tp.append("%s%d" % [uid[0], Game.up[uid[0]]])
 			return ",".join(tp)
 		"stable":
@@ -1097,14 +1094,17 @@ func _shop_sig(kind: String) -> String:
 					wp.append("w%d:%d" % [i, int(Game.members[i]["weapon_lv"])])
 			return ",".join(wp)
 		"board":
-			return "track%d" % Game.up["track"] if _can_up("track", 350, 2.0, 2, 0) else ""
-		"gearshop":
-			var gp: Array = []
-			for uid in [["gear_atk",15,1.28,20],["gear_hp",20,1.30,20],["gear_def",25,1.32,20],
-					["gear_spd",30,1.30,12],["gear_gold",30,1.30,12]]:
-				if _can_up(uid[0], uid[1], uid[2], uid[3], 0):
-					gp.append("%s%d" % [uid[0], Game.up[uid[0]]])
-			return ",".join(gp)
+			var board_parts: Array = []
+			if _can_up("scout", 90, 1.65, 6, 0): board_parts.append("scout%d" % Game.up["scout"])
+			if _can_up("bounty", 120, 1.75, 6, 0): board_parts.append("bounty%d" % Game.up["bounty"])
+			if _can_up("track", 350, 2.0, 2, 0): board_parts.append("track%d" % Game.up["track"])
+			return ",".join(board_parts)
+		"potzone":
+			return "pot%d:%d" % [Game.up["pot_count"], Game.up["pot_regen"]] if _can_up("pot_count", 70, 1.7, 6, 0) or _can_up("pot_regen", 90, 1.75, 6, 0) else ""
+		"treasure":
+			return "treasure%d:%d" % [Game.up["treasure_need"], Game.up["treasure_grade"]] if _can_up("treasure_need", 500, 2.0, 5, 0) or _can_up("treasure_grade", 650, 2.1, 5, 0) else ""
+		"digsite":
+			return "dig%d:%d" % [Game.up["dig_count"], Game.up["dig_luck"]] if _can_up("dig_count", 900, 1.9, 4, 0) or _can_up("dig_luck", 1200, 2.2, 3, 0) else ""
 	return ""
 
 func marker_on(kind: String) -> bool:
@@ -1122,11 +1122,6 @@ func can_shop(kind: String) -> bool:
 	# v4.0 §B-1: 건물별 "지금 실행 가능한 일" 판정 — main의 마커 폴링이 부른다
 	match kind:
 		"chief":
-			for e in main.BUILD_CATALOG:
-				if not main.catalog_built(e) and main.catalog_unlocked(e) and Game.gold >= int(e["cost"]):
-					return true
-			if Game.extra_pots < 3 and Game.gold >= int(30 * pow(2.2, Game.extra_pots)):
-				return true
 			for r in main.candidate_residents():
 				var c: Dictionary = r["cond"]
 				if c.has("gold") and (not c.has("lv") or Game.level >= int(c["lv"])) \
@@ -1134,7 +1129,7 @@ func can_shop(kind: String) -> bool:
 					return true
 			return false
 		"inn":
-			return _can_up("max_hp", 30, 1.2, 9, 0)
+			return _can_up("max_hp", 30, 1.45, 99, 0)
 		"church":
 			if Game.ghost_count() > 0 and Game.gold >= Game.revive_cost():
 				return true
@@ -1150,8 +1145,7 @@ func can_shop(kind: String) -> bool:
 				return true
 			return Game.up["intuition"] > 0 and _can_up("telepathy", 500, 1.0, 1, 0)
 		"train":
-			return _can_up("win_cap", 100, 2.2, 5, 2 + Game.up["win_cap"] * 2) \
-				or _can_up("battle_speed", 25, 1.22, 12, 0) \
+			return _can_up("win_cap", 100, 3.0, 9, 0) \
 				or _can_up("density", 160, 1.0, 1, 4) or _can_up("flee", 300, 1.0, 1, 3)
 		"stable":
 			if _can_up("speed", 25, 1.2, 9, 0) or _can_up("intuition", 800, 1.0, 1, 5):
@@ -1169,11 +1163,10 @@ func can_shop(kind: String) -> bool:
 					return true
 			return false
 		"board":
-			return _can_up("track", 350, 2.0, 2, 0)
-		"gearshop":
-			return _can_up("gear_atk", 15, 1.28, 20, 0) or _can_up("gear_hp", 20, 1.30, 20, 0) \
-				or _can_up("gear_def", 25, 1.32, 20, 0) or _can_up("gear_spd", 30, 1.30, 12, 0) \
-				or _can_up("gear_gold", 30, 1.30, 12, 0)
+			return _can_up("scout", 90, 1.65, 6, 0) or _can_up("bounty", 120, 1.75, 6, 0) or _can_up("track", 350, 2.0, 2, 0)
+		"potzone": return _can_up("pot_count", 70, 1.7, 6, 0) or _can_up("pot_regen", 90, 1.75, 6, 0)
+		"treasure": return _can_up("treasure_need", 500, 2.0, 5, 0) or _can_up("treasure_grade", 650, 2.1, 5, 0)
+		"digsite": return _can_up("dig_count", 900, 1.9, 4, 0) or _can_up("dig_luck", 1200, 2.2, 3, 0)
 	return false
 
 func _up_row(v: VBoxContainer, id: String, name_txt: String, desc: String, base: int, growth: float, max_lv: int, lv_gate: int) -> void:
@@ -1202,7 +1195,9 @@ func _buy_up(id: String, cost: int, reopen: String) -> void:
 		"train": open_training()
 		"stable": open_stable()
 		"board": open_board()
-		"gearshop": open_gearshop()
+		"potzone": open_potzone()
+		"treasure": open_treasure()
+		"digsite": open_digsite()
 		_: open_chief()
 
 func _chief_pay(id: String) -> void:
@@ -1217,22 +1212,6 @@ func _chief_pay_companion(id: String) -> void:
 	else:
 		open_chief()
 
-func _chief_build_board(cost: int) -> void:
-	if not Game.try_spend(cost):
-		Sfx.play("deny")
-		return
-	Sfx.play("buy")
-	main.build_board()
-	close_menu()
-
-func _chief_add_pots(cost: int) -> void:
-	if not Game.try_spend(cost):
-		Sfx.play("deny")
-		return
-	Sfx.play("buy")
-	main.add_pots()
-	open_chief()
-
 func open_inn() -> void:
 	_menu_kind = "inn"
 	var v := _menu_panel("여관 — \"어서 오세요\"")
@@ -1241,7 +1220,7 @@ func open_inn() -> void:
 	var rest_btn := "몸으로" if remote_open else ("무료" if rest_cost <= 0 else "%d G" % rest_cost)
 	_menu_row(v, "쉬어간다", "일행의 HP를 전부 회복한다 (잃은 만큼 값을 치른다)", rest_btn,
 		need and not remote_open and Game.gold >= rest_cost, _inn_rest)
-	_up_row(v, "max_hp", "침구 개선", "전원 최대 HP +8%", 30, 1.2, 9, 0)
+	_up_row(v, "max_hp", "침구 개선", "전원 최대 HP +8%", 30, 1.45, 99, 0)
 	# 작전 명령 (v3.2 §B-3 — 드퀘4 오마주. 훈장=반영구, 작전=수시 스위치)
 	if Game.tactic_known:
 		v.add_child(UILib.make_label("— 작전 명령 (개별 지시는 파티창 클릭) —", UILib.FS, UILib.COL_GOLD))
@@ -1279,20 +1258,55 @@ func open_inn() -> void:
 
 func open_formation() -> void:
 	_menu_kind = "formation"
-	var v := _menu_panel("파티 편성 — 최대 %d명" % Game.PARTY_MAX)
+	var v := _menu_panel("전술판 — 이름표를 끌어 4슬롯에 편성")
 	for id in Game.COMPANIONS.keys():
 		if not Game.companions_owned.get(id, false):
 			continue
 		var d: Dictionary = Game.COMPANIONS[id]
 		var in_party: bool = Game.party_ids.has(id)
 		var tag: String = "정규" if d["regular"] else "객원"
-		if id == "hero":
-			_menu_row(v, "★ %s (%s)" % [d["name"], tag], String(d["pdesc"]), "고정", false, func(): pass)
-		else:
-			_menu_row(v, ("★ " if in_party else "・ ") + "%s (%s)" % [d["name"], tag], String(d["pdesc"]),
-				"빼기" if in_party else "넣기",
-				in_party or Game.party_ids.size() < Game.PARTY_MAX,
-				func(): _formation_toggle(id))
+		var plate := FormationNameplate.new()
+		plate.member_id = id
+		plate.hud = self
+		plate.text = ("★ " if in_party else "・ ") + "%s (%s) — %s" % [d["name"], tag, "고정" if id == "hero" else ("편성" if in_party else "대기")]
+		plate.tooltip_text = String(d["pdesc"])
+		if id != "hero": plate.pressed.connect(func(): _formation_toggle(id))
+		v.add_child(plate)
+	if not Game.arts_owned.is_empty():
+		v.add_child(UILib.make_label("— 오의 슬롯 —", UILib.FS, UILib.COL_GOLD))
+		var art_slot := FormationNameplate.new()
+		art_slot.hud = self
+		art_slot.drag_kind = ""
+		art_slot.accepts_kind = "art"
+		art_slot.member_id = Game.equipped_art
+		art_slot.text = "[ %s ]" % ("비어 있음" if Game.equipped_art == "" else Game.art_def(Game.equipped_art)["name"])
+		v.add_child(art_slot)
+		for art_id in Game.arts_owned:
+			var art_plate := FormationNameplate.new()
+			art_plate.hud = self
+			art_plate.drag_kind = "art"
+			art_plate.accepts_kind = ""
+			art_plate.member_id = art_id
+			art_plate.text = "오의서 · " + String(Game.art_def(art_id)["name"])
+			v.add_child(art_plate)
+	if not Game.medals_owned.is_empty():
+		v.add_child(UILib.make_label("— 훈장 슬롯 —", UILib.FS, UILib.COL_GOLD))
+		for slot in Game.medal_slots():
+			var medal_slot := FormationNameplate.new()
+			medal_slot.hud = self
+			medal_slot.drag_kind = ""
+			medal_slot.accepts_kind = "medal"
+			medal_slot.member_id = String(Game.medals_equipped[slot]) if slot < Game.medals_equipped.size() else ""
+			medal_slot.text = "[%d] %s" % [slot + 1, "비어 있음" if medal_slot.member_id == "" else Game.MEDAL_DEFS[medal_slot.member_id]["name"]]
+			v.add_child(medal_slot)
+		for medal_id in Game.medals_owned:
+			var medal_plate := FormationNameplate.new()
+			medal_plate.hud = self
+			medal_plate.drag_kind = "medal"
+			medal_plate.accepts_kind = ""
+			medal_plate.member_id = medal_id
+			medal_plate.text = "훈장 · " + String(Game.MEDAL_DEFS[medal_id]["name"])
+			v.add_child(medal_plate)
 	if Game.combo_hint_known and Game.arts_owned.size() < Game.COMBO_DEFS.size():
 		v.add_child(UILib.make_label("어딘가에 아직 못 찾은 오의서가 있다…", UILib.FS, UILib.COL_GRAY))
 
@@ -1304,6 +1318,48 @@ func _formation_toggle(id: String) -> void:
 	else:
 		Sfx.play("deny")
 		event("자리가 없다! (최대 %d명)" % Game.PARTY_MAX)
+
+func _formation_drop(source: String, target: String) -> void:
+	if source == "hero" or not Game.companions_owned.get(source, false):
+		return
+	var source_in := Game.party_ids.has(source)
+	var target_in := Game.party_ids.has(target)
+	if source_in and target_in:
+		var from := Game.party_ids.find(source)
+		var to := Game.party_ids.find(target)
+		Game.party_ids.remove_at(from)
+		Game.party_ids.insert(to, source)
+	elif not source_in and target_in and target != "hero":
+		Game.party_ids[Game.party_ids.find(target)] = source
+	elif not source_in and Game.party_ids.size() < Game.PARTY_MAX:
+		Game.party_ids.append(source)
+	else:
+		Sfx.play("deny")
+		return
+	Game.rebuild_party()
+	Game.save_game()
+	Sfx.play("click")
+	open_formation()
+
+func _tactics_drop(kind: String, source: String, target: String) -> void:
+	match kind:
+		"party_member": _formation_drop(source, target)
+		"art":
+			if Game.arts_owned.has(source):
+				Game.equipped_art = source
+				Game.combo_gauge = 0.0
+				Game.save_game()
+				open_formation()
+		"medal":
+			if not Game.medals_owned.has(source): return
+			var target_index := Game.medals_equipped.find(target)
+			Game.medals_equipped.erase(source)
+			if target_index >= 0:
+				Game.medals_equipped[target_index] = source
+			elif Game.medals_equipped.size() < Game.medal_slots():
+				Game.medals_equipped.append(source)
+			Game.save_game()
+			open_formation()
 
 func open_book() -> void:
 	# v3.9: 동료 8 + 주민 전원 수록 도감
@@ -1361,7 +1417,7 @@ func _inn_rest() -> void:
 
 func open_church() -> void:
 	_menu_kind = "church"
-	var v := _menu_panel("교회 — 경건한 기운")
+	var v := _menu_panel("성소 — 회복과 축복")
 	var ghosts := Game.ghost_count()
 	var cost := Game.revive_cost()
 	_menu_row(v, "유령을 되살린다 (%d명)" % ghosts, "빛이 일행을 감싸안는다", "%d G" % cost if ghosts > 0 else "—",
@@ -1394,17 +1450,6 @@ func _church_revive() -> void:
 	event("빛이 일행을 감싸안았다. 되살아났다!", 3.0)
 	close_menu()
 
-func open_gearshop() -> void:
-	# v4.3: 장비점 = 초반 강화축. 진짜 아이템이 아니라 수치업 (무기/방어구/신발/벨트/부적)
-	_menu_kind = "gearshop"
-	var v := _menu_panel("장비점 — \"몸에 걸치면 강해집니다\"")
-	v.add_child(UILib.make_label("사면 즉시 전원에게 적용됩니다", UILib.FS, UILib.COL_GRAY))
-	_up_row(v, "gear_atk", "무기 강화", "전원 공격력 +2", 15, 1.28, 20, 0)
-	_up_row(v, "gear_hp", "방어구", "전원 최대 HP +10%", 20, 1.30, 20, 0)
-	_up_row(v, "gear_def", "방패·투구", "전원 방어력 +4 (받는 피해 감소)", 25, 1.32, 20, 0)
-	_up_row(v, "gear_spd", "신발", "이동 속도 +5%", 30, 1.30, 12, 0)
-	_up_row(v, "gear_gold", "돈주머니 벨트", "골드 획득 +8%", 30, 1.30, 12, 0)
-
 func open_shop_menu() -> void:
 	_menu_kind = "shop"
 	var v := _menu_panel("상점 — \"좋은 물건 있습니다\"")
@@ -1417,28 +1462,6 @@ func open_shop_menu() -> void:
 		_up_row(v, "lantern", "등불", "밤 시야 반경 확장 (최종: 대열 전체가 빛의 뱀)", 120, 1.9, 3, 0)
 	if Game.up["intuition"] > 0:
 		_up_row(v, "telepathy", "상인의 텔레파시", "멀리서도 건물 메뉴를 열 수 있다 (몸 행위는 불가)", 500, 1.0, 1, 0)
-	v.add_child(UILib.make_label("— 조수 동물 —", UILib.FS, UILib.COL_GOLD))
-	_assist_row(v, "monkey", "원숭이", "마을 항아리를 자동으로 깬다", 600, 2.5, 3)
-	_assist_row(v, "keeper", "상자지기", "보물상자를 자동으로 연다", 900, 1.0, 1)
-	_assist_row(v, "pig", "꽃돼지", "필드의 반짝이를 자동으로 판다", 1200, 2.2, 3)
-
-func _assist_row(v: VBoxContainer, id: String, name_txt: String, desc: String, base: int, growth: float, max_n: int) -> void:
-	var n: int = Game.assistants[id]
-	var maxed: bool = n >= max_n
-	var cost := Game.price(int(base * pow(growth, n)))
-	_menu_row(v, "%s %d/%d" % [name_txt, n, max_n], desc, "완료" if maxed else "%d G" % cost,
-		not maxed and Game.gold >= cost, func(): _buy_assist(id, cost))
-
-func _buy_assist(id: String, cost: int) -> void:
-	if not Game.try_spend(cost):
-		Sfx.play("deny")
-		return
-	Sfx.play("buy")
-	Game.assistants[id] += 1
-	main.spawn_assistant(id)
-	event("새 조수가 마을에 도착했다!")
-	Game.save_game()
-	open_shop_menu()
 
 func open_medalking() -> void:
 	_menu_kind = "medalking"
@@ -1514,29 +1537,24 @@ func _depart(i: int) -> void:
 
 func open_weaponshop() -> void:
 	_menu_kind = "weaponshop"
-	var v := _menu_panel("무기점 — \"골드가 곧 힘입니다\"")
+	var v := _menu_panel("무기점 — 새 무기의 이름을 파는 곳")
 	for i in Game.members.size():
 		var m: Dictionary = Game.members[i]
 		var cost := Game.weapon_cost(i)
-		# 강화 변화량 필수 표시 (v3.4): 공격력 37 → 41
-		var now := Game.member_atk(i)
-		var after := int((Game.member_atk_flat(i) + 2) * Game.forge_mult(m["cls"]))
-		_menu_row(v, "%s — %s" % [String(m["name"]), Game.weapon_name(i)],
-			"강화하면 공격력 %d → %d" % [now, after], "%d G" % cost,
-			Game.gold >= cost, func(): _buy_weapon(i, cost))
+		if Game.weapon_tier(i) >= 2:
+			_menu_row(v, "%s — %s" % [String(m["name"]), Game.weapon_name(i)], "최종 티어", "완료", false, func(): pass)
+			continue
+		var can_tier := Game.can_buy_weapon_tier(i)
+		var desc := "%s · 벼림 %d 계승 · 공격력 %d → %d" % [Game.next_weapon_name(i), int(m["weapon_lv"]), Game.member_atk(i), Game.next_tier_attack(i)]
+		_menu_row(v, "%s — 다음 티어" % String(m["name"]), desc, "%d G" % cost,
+			can_tier and Game.gold >= cost, func(): _buy_weapon(i))
 
-func _buy_weapon(i: int, cost: int) -> void:
-	if not Game.try_spend(cost):
+func _buy_weapon(i: int) -> void:
+	if not Game.buy_weapon_tier(i):
 		Sfx.play("deny")
 		return
-	Sfx.play("buy")
-	var cls := String(Game.members[i]["cls"])
-	var lv: int = int(Game.members[i]["weapon_lv"]) + 1
-	Game.set_weapon_lv(cls, lv)
-	event("공격력이 올랐다! %s (공격력 %d)" % [Game.weapon_name(i), Game.member_atk(i)], 3.0)
-	if lv == 5 or lv == 10:
-		Sfx.play("fanfare_big")
-		event("%s이(가) 다시 태어났다! — 「%s」" % [Game.members[i]["name"], Game.weapon_name(i)], 4.0)
+	Sfx.play("fanfare_big")
+	event("새 무기를 손에 넣었다! — 「%s」" % Game.weapon_name(i), 4.0)
 	Game.save_game()
 	open_weaponshop()
 
@@ -1544,17 +1562,23 @@ func _buy_weapon(i: int, cost: int) -> void:
 
 func open_smith() -> void:
 	_menu_kind = "smith"
-	var v := _menu_panel("대장간 — \"벼리면 더 강해지지\"")
-	v.add_child(UILib.make_label("벼림 보정 = % 배율. 무기(플랫)가 클수록 가치가 커진다", UILib.FS, UILib.COL_GRAY))
+	var v := _menu_panel("대장간 — 현재 무기를 단련한다")
+	_up_row(v, "forge_eff", "벼림 효율", "단련도 획득 +25%", 300, 2.0, 3, 0)
+	_up_row(v, "apprentice", "제자 자동화", "자동 단련도 상시 ×1.00", 1800, 1.0, 1, 0)
 	for i in Game.members.size():
 		var m: Dictionary = Game.members[i]
 		var cost := Game.forge_cost(i)
-		var pts: int = int(Game.companion_forge.get(m["cls"], 0))
-		var now := Game.member_atk(i)
-		var after := int(Game.member_atk_flat(i) * (Game.forge_mult(m["cls"]) + 0.03))
-		_menu_row(v, "%s — 벼림 +%d%%" % [String(m["name"]), pts * 3],
-			"리듬 판정 +1~+3. 지금 벼리면 공격력 %d → 약 %d (직접 와야 한다)" % [now, after], "%d G" % cost,
-			Game.gold >= cost and not remote_open, func(): _start_forge(i, cost))
+		_menu_row(v, "%s — %s" % [String(m["name"]), Game.weapon_name(i)],
+			"단련도 %d/100 · 버튼 즉시 ×1.00" % Game.training_progress(m["cls"]), "%d G" % cost,
+			Game.gold >= cost, func(): _basic_forge(i, cost))
+		if not remote_open:
+			_menu_row(v, "  망치 타이밍 (선택)", "좋음 ×1.25 / 완벽 ×1.75 · 실패/하락 없음", "도전", true,
+				func(): _start_forge(i, cost))
+
+func _basic_forge(i: int, cost: int) -> void:
+	print("BUILDING_ACTION: smithy_forge")
+	if not Game.try_spend(cost): return
+	_apply_forge(i, 1)
 
 func _start_forge(i: int, cost: int) -> void:
 	if not Game.try_spend(cost):
@@ -1574,24 +1598,23 @@ func _start_forge(i: int, cost: int) -> void:
 		_apply_forge(i, result))
 
 func _apply_forge(i: int, result: int) -> void:
-	# v3.4: 대장간 = 벼림 % (무기 플랫과 별개 슬롯)
 	var cls := String(Game.members[i]["cls"])
-	Game.companion_forge[cls] = int(Game.companion_forge.get(cls, 0)) + result
-	var pct: int = int(Game.companion_forge[cls]) * 3
+	var multiplier: float = [1.0, 1.0, 1.25, 1.75][clampi(result, 0, 3)]
+	Game.train_weapon(cls, multiplier)
 	if result >= 3:
 		Sfx.play("forge3")
 		Sfx.play("fanfare_big")
-		event("회심의 필살작!! 벼림 +%d%% (공격력 %d)" % [pct, Game.member_atk(i)], 3.5)
+		event("회심의 필살작!! 단련도 ×1.75", 3.5)
 		Game.smith_perfects += 1
 		if Game.smith_perfects >= 3 and Game.own_medal("anvil_bless"):
 			event("훈장 「모루의 축복」 을 손에 넣었다!", 4.0)
 			_update_top()
 	elif result == 2:
 		Sfx.play("forge2")
-		event("좋은 벼림이다. +%d%% (공격력 %d)" % [pct, Game.member_atk(i)], 2.5)
+		event("좋은 벼림이다. 단련도 ×1.25", 2.5)
 	else:
 		Sfx.play("forge1")
-		event("…뭐, 쓸 만하다. +%d%% (공격력 %d)" % [pct, Game.member_atk(i)], 2.5)
+		event("안정적인 단련이다. 단련도 ×1.00", 2.5)
 	if main != null:
 		main.on_forged()
 	Game.party_changed.emit()
@@ -1606,6 +1629,8 @@ func open_board(tab: int = -1) -> void:
 	if not Game.fields_unlocked[_board_tab]:
 		_board_tab = 0
 	var v := _menu_panel("탐문 게시판 — 놈들은 어디 사는가")
+	_up_row(v, "scout", "정찰", "필드 적 수·리스폰 증가", 90, 1.65, 6, 0)
+	_up_row(v, "bounty", "현상금", "골드 획득 +12%", 120, 1.75, 6, 0)
 	# 필드 탭
 	var tabs := HBoxContainer.new()
 	tabs.add_theme_constant_override("separation", 4)
@@ -1951,6 +1976,7 @@ func open_casino() -> void:
 	# 운 트리 (v3.2 §B-10) — 결제는 코인 전용: 코인 벌어 코인 잘 버는 내부 루프
 	v.add_child(UILib.make_label("— 행운 (코인 결제) —", UILib.FS, UILib.COL_GOLD))
 	_casino_up_row(v, "jackpot", "잭팟의 예감", "같은 그림이 나올 확률이 오른다", 60, 2.2, 3)
+	_casino_up_row(v, "bet", "베팅 한도", "스핀 비용과 당첨금이 함께 오른다", 80, 2.0, 3)
 	_casino_up_row(v, "consol", "꽝 위로금", "꽝이 나오면 코인을 조금 돌려받는다", 40, 2.0, 3)
 	_casino_up_row(v, "hold", "홀드 해금", "릴 1개를 고정하는 기술 (스핀 2코인)", 150, 1.0, 1)
 	# 교환소
@@ -1978,6 +2004,7 @@ func _casino_buy_up(id: String, cost: int) -> void:
 		Sfx.play("deny")
 		return
 	Game.coins -= cost
+	Game.casino_spins += 1
 	Game.casino_up[id] += 1
 	Sfx.play("buy")
 	_update_top()
@@ -2009,7 +2036,8 @@ func _casino_spin() -> void:
 	if _spin_active or _menu_kind != "casino":
 		return
 	var hold_on: bool = _casino_hold and Game.casino_up["hold"] > 0
-	var cost := 2 if hold_on else 1
+	var bet_mult: int = 1 + Game.casino_up["bet"]
+	var cost := (2 if hold_on else 1) * bet_mult
 	if Game.coins < cost:
 		Sfx.play("deny")
 		event("코인이 없다. …골드는 두고 가라.")
@@ -2026,12 +2054,23 @@ func _casino_spin() -> void:
 	for i in [1, 2]:
 		if final[i] != final[0] and randf() < 0.07 * Game.casino_up["jackpot"]:
 			final[i] = final[0]
+	# 안전장치: 3연속 꽝 금지 / 10회 누적 확정 잭팟.
+	if Game.casino_spins % 10 == 0:
+		final = ["gold", "gold", "gold"]
+	elif Game.casino_miss_streak >= 2:
+		final[1] = final[0]
 	_casino_last = final.duplicate()
 	var payout := 0
 	if final[0] == final[1] and final[1] == final[2]:
 		payout = SLOT_PAYOUTS[final[0]]
 	elif final[0] == final[1] or final[1] == final[2] or final[0] == final[2]:
 		payout = 1
+	if payout > 0 and Game.medal_on("jackpot_777"):
+		payout = maxi(1, int(round(payout * 1.77)))
+	payout *= bet_mult
+	Game.casino_miss_streak = Game.casino_miss_streak + 1 if payout == 0 else 0
+	if Game.casino_spins % 5 == 0:
+		Game.treasure_wins += 5
 	# 카지노 VIP 카드 — 슬롯의 몬스터가 필드에 실체화 (v3.2 조건형)
 	if Game.medal_on("vip_card") and main != null and ("slime" in final or "bat" in final):
 		main.vip_spawn()
@@ -2061,6 +2100,8 @@ func _animate_spin(final: Array, payout: int) -> void:
 			l.text = "대박!! +%d 코인!!" % payout
 			l.add_theme_color_override("font_color", UILib.COL_GOLD)
 			Sfx.play("gold_big")
+			if final[0] == "gold" and final[1] == "gold" and final[2] == "gold" and Game.own_medal("jackpot_777"):
+				event("첫 잭팟! 훈장 「777 목걸이」를 손에 넣었다!", 4.0)
 		elif payout > 1:
 			l.text = "맞췄다! +%d 코인!" % payout
 			l.add_theme_color_override("font_color", UILib.COL_GOLD)
@@ -2191,7 +2232,7 @@ func title_hide(on: bool) -> void:
 	if _holy_cell != null and is_instance_valid(_holy_cell):
 		_holy_cell.visible = Game.ui_unlocked["party"] and not on and Game.buildings["church"]
 	if _combo_cell != null and is_instance_valid(_combo_cell):
-		_combo_cell.visible = false  # _update_combo_bar가 매 프레임 재판정
+		_combo_cell.visible = false
 	_tooltip.visible = false
 	_event_box.visible = false
 	_event_q.clear()
@@ -2199,6 +2240,40 @@ func title_hide(on: bool) -> void:
 	_event_state = "idle"
 	if _event_tween != null and _event_tween.is_valid():
 		_event_tween.kill()
+
+func toggle_debug_drawer() -> void:
+	if not OS.is_debug_build():
+		return
+	if _debug_drawer != null and is_instance_valid(_debug_drawer):
+		_debug_drawer.queue_free()
+		_debug_drawer = null
+		return
+	var panel := UILib.make_panel(UILib.COL_GOLD)
+	panel.position = Vector2(430, 42)
+	panel.custom_minimum_size = Vector2(200, 0)
+	panel.z_index = 90
+	_overlay_root.add_child(panel)
+	_debug_drawer = panel
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 3)
+	panel.add_child(box)
+	box.add_child(UILib.make_label("F3 DEBUG", UILib.FS, UILib.COL_GOLD))
+	_debug_button(box, "전투창 채우기", func():
+		while main.windows.size() < Game.max_windows():
+			main._open_battle([Game.MONSTER_DEFS[0]], false, Vector2(360, 120)))
+	_debug_button(box, "전멸", func():
+		for i in Game.members.size(): Game.damage_member(i, 999999))
+	_debug_button(box, "완전 회복", Game.heal_all_full)
+	_debug_button(box, "+10,000 G", func(): Game.add_gold(10000))
+	for slot in 3:
+		_debug_button(box, "슬롯 %d 저장" % (slot + 1), func():
+			Game.set_slot(slot + 1)
+			Game.save_game())
+
+func _debug_button(parent: VBoxContainer, text: String, action: Callable) -> void:
+	var button := UILib.make_button(text, UILib.FS)
+	button.pressed.connect(action)
+	parent.add_child(button)
 
 var _title_suppress := false
 
@@ -2224,7 +2299,7 @@ func open_title_slots(new_game: bool) -> void:
 		if m.get("exists", false):
 			var mins := int(float(m["playtime"]) / 60.0)
 			var label := "서 %d — %s Lv%d" % [i, m["name"], m["level"]]
-			var sub := "%d주차 · 부흥 %d단계 · %d시간 %d분" % [m["run"], m["revival"], mins / 60, mins % 60]
+			var sub := "%d주차 · 기지 외형 %d단계 · %d시간 %d분" % [m["run"], m["revival"], mins / 60, mins % 60]
 			if new_game:
 				_menu_row(v, label, sub + " — 여기에 새로 쓰면 지워진다!", "덮어쓴다", true,
 					func(): _title_confirm_overwrite(i))

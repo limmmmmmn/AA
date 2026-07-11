@@ -9,10 +9,9 @@ signal chapter_changed(value: int)
 signal party_wiped
 signal upgrades_changed
 
-const MAX_WINDOWS_HARD := 8
-const SAVE_VERSION := 6
+const MAX_WINDOWS_HARD := 20
+const SAVE_VERSION := 8
 const MIN_SUPPORTED_SAVE_VERSION := 4
-const REVIVAL_STEPS := [4, 8, 12, 15]
 
 # ---------------------------------------------------------------- 세이브 3슬롯 (v3.3 §C — 드퀘3 문법)
 var save_slot := 1
@@ -122,7 +121,9 @@ var members: Array = []              # 편성된 파티의 런타임 [{cls, name
 var companions_owned := {"hero": true}
 var party_ids: Array = ["hero"]      # 현재 편성 (여관에서 교체, 최대 5)
 var companion_weapons := {}          # id → 무기 레벨 (무기점 플랫, 정규만)
-var companion_forge := {}            # id → 벼림 포인트 (대장간 % 배율, v3.4 §B-5)
+var companion_forge := {}            # 구 세이브 호환: 벼림 포인트
+var companion_weapon_tiers := {}     # id → 무기점에서 산 티어
+var companion_training := {}         # id → 현재 무기 단련도 0~99
 var new_flags: Array = []            # NEW 뱃지 대기열 — 도감 열람 시 해제 (v3.4 §B-10)
 
 func mark_new(id: String) -> void:
@@ -177,7 +178,11 @@ var roto_helm := false
 var lunch_until := 0.0               # 엄마의 도시락 버프 (playtime 기준, §B-6)
 var silver_seen := false             # 은빛 슬라임 첫 조우 (밤 예고용)
 var titles: Array = []               # 획득한 칭호 id 순서 (§B-8)
-var casino_up := {"jackpot": 0, "consol": 0, "hold": 0}  # 카지노 운 트리 (§B-10 — 코인 결제)
+var casino_up := {"jackpot": 0, "consol": 0, "hold": 0, "bet": 0}
+var casino_miss_streak := 0
+var casino_spins := 0
+var treasure_wins := 0
+var battle_snapshots: Array = []
 # 통계 카운터 — 칭호·도전과제식 훈장·(장래) 스팀 업적이 공유 (§E)
 var stats := {
 	"pots": 0, "digs": 0, "wells": 0, "flees": 0, "inn_rests": 0, "forges": 0,
@@ -247,6 +252,7 @@ func roll_tactic() -> String:
 
 var gold: int = 0
 var total_earned: int = 0
+var total_gold_spent: int = 0
 var level: int = 1
 var exp: int = 0
 var run_count: int = 1  # 회차
@@ -266,7 +272,11 @@ var up := {
 	# v3.9 §B-2: 고아가 된 객원 패시브의 이관
 	"requiem": 0, "linger": 0, "meal": 0, "pickaxe": 0, "track": 0,
 	# v4.3 장비점 = 초반 강화축 (진짜 아이템 아님, 수치업). def = 신설 방어 스탯
-	"gear_atk": 0, "gear_hp": 0, "gear_def": 0, "gear_spd": 0, "gear_gold": 0,
+		"gear_atk": 0, "gear_hp": 0, "gear_def": 0, "gear_spd": 0, "gear_gold": 0,
+		"forge_eff": 0, "apprentice": 0,
+		"scout": 0, "bounty": 0,
+		"pot_count": 0, "pot_regen": 0, "treasure_need": 0, "treasure_grade": 0,
+		"dig_count": 0, "dig_luck": 0,
 }
 
 # 성수 게이지 (v3.1 §B-7-4 — 수량제 아님, 자동 재생 리소스)
@@ -295,8 +305,8 @@ var fields_unlocked: Array = [true, false, false, false, false, false]
 var bosses_defeated: Array = [false, false, false, false, false, false]
 var posters_f: Array = [0, 0, 0, 0, 0, 0]  # 필드별 수배서 (마왕성·수중 제외)
 var extra_pots := 0
-var buildings := {"inn": false, "church": false, "smith": false, "chest": false, "casino": false, "bard": false, "medalking": false, "shop": false, "bank": false, "weaponshop": false, "train": false, "stable": false}  # v4.0: 훈련소/마구간 신설, 게시판은 기물로
-var fixtures := {"board": false, "well": false, "frogstatue": false, "lamppost": false, "scarecrow": false}  # v4.0 §B-4: 기물 — 소형 오브젝트, 잔돈 쇼핑의 층
+var buildings := {"inn": false, "church": false, "smith": false, "chest": false, "casino": false, "bard": false, "medalking": false, "shop": false, "bank": false, "weaponshop": false, "train": false, "stable": false, "treasure": false, "digsite": false, "tactics": false, "hq": false}
+var fixtures := {"board": false, "well": false, "frogstatue": false, "lamppost": false, "scarecrow": false}
 var recruits_spawned := {"knight": false, "mage": false, "priest": false, "warrior": false, "monkf": false}
 var discovered := {}                 # 검시(도감): kind 문자열 → true
 var golden_first_done := false
@@ -308,8 +318,7 @@ var residents := {}                  # id → true (영입됨). 주민은 기능
 var kill_counts := {}                # 몬스터 id → 처치 수 (부탁 퀘스트용)
 var medals_small := 0                # 작은 메달 (골드 교환 불가 수집품)
 var medals_spent := 0                # 메달왕에게 이미 교환한 누적치
-var keys := {"thief": false, "magic": false, "sea": false}   # 드퀘 열쇠 (+바다의 노래)
-var opened := {"warehouse": false, "redchest": false}  # 잠긴 오브젝트
+var keys := {"sea": false}   # 바다의 노래 — 숨겨진 필드 입장 자격
 var signpost_seen := false           # 이정표 등장 여부 (보스 1 처치 후)
 
 # UI 공개 스케줄 — 화면의 모든 UI는 해금 이벤트를 가진다 ("게임이 자라는 게임")
@@ -329,15 +338,25 @@ func built_count_from(saved_buildings: Dictionary, saved_fixtures: Dictionary, s
 			total += 1
 	return total
 
-func revival_stage_from_count(count: int) -> int:
-	var stage := 0
-	for threshold in REVIVAL_STEPS:
-		if count >= threshold:
-			stage += 1
-	return stage
-
 func revival_stage() -> int:
-	return revival_stage_from_count(built_count())
+	return visual_base_stage()
+
+func ensure_core_facilities() -> void:
+	# 기본 JRPG 기능은 해금 보상이 아니라 시작 규칙이다.
+	for id in ["inn", "church", "weaponshop", "smith", "train", "tactics"]:
+		buildings[id] = true
+	extra_pots = maxi(extra_pots, 1)
+
+func visual_base_stage() -> int:
+	# 기능 해금과 무관한 기지 외형 보상. 소비·구조·보스 결과만 반영한다.
+	var score := total_gold_spent + resident_count() * 1500
+	for defeated in bosses_defeated:
+		if defeated: score += 5000
+	if score >= 25000: return 4
+	if score >= 10000: return 3
+	if score >= 3000: return 2
+	if score >= 1000: return 1
+	return 0
 
 func inn_rest_cost() -> int:
 	# v4.1: 쉬어가기 유료화 — 잃은 HP 비율만큼 현재 골드의 %를 낸다 (최소 1G, 상한 완만)
@@ -380,7 +399,8 @@ const MEDAL_DEFS := {
 	"rich_seal":     {"tier": "순수", "name": "부자의 인장",        "desc": "골드 획득 +10%",                           "hint": "카지노 교환소 한정"},
 	"holy_pendant":  {"tier": "순수", "name": "성수병 목걸이",      "desc": "성수 재생 +30%",                           "hint": "신부의 눈길이 벼려지면…"},
 	"watch_eye":     {"tier": "순수", "name": "파수꾼의 눈",        "desc": "전투창 상한 +1",                           "hint": "카지노 교환소 한정"},
-	"attendance":    {"tier": "순수", "name": "개근상",             "desc": "경험치 획득 +10%",                         "hint": "칭호를 3개 모으면…"},
+		"attendance":    {"tier": "순수", "name": "개근상",             "desc": "경험치 획득 +10%",                         "hint": "칭호를 3개 모으면…"},
+		"jackpot_777":   {"tier": "조건", "name": "777 목걸이",        "desc": "슬롯 당첨 보상 +77%",                     "hint": "첫 잭팟을 터뜨리면…"},
 	# --- 양날형 (이득 + 대가) ---
 	"mimic_teeth":   {"tier": "양날", "name": "미믹의 이빨",        "desc": "모든 상자가 미믹, 보상 3배",               "hint": "미믹을 10번 이기면…"},
 	"cracked_pot":   {"tier": "양날", "name": "금 간 항아리",       "desc": "항아리 쿨타임 절반, 보상 절반",            "hint": "항아리를 1000개 깨뜨리면…"},
@@ -556,13 +576,19 @@ func slot_meta(i: int) -> Dictionary:
 	# v4.0 이전 저장의 게시판 마이그레이션도 슬롯 미리보기에 반영한다.
 	if bool(saved_buildings.get("board", false)):
 		saved_fixtures["board"] = true
-	var construction_count := built_count_from(saved_buildings, saved_fixtures, int(d.get("extra_pots", 0)))
+	var saved_spent := int(d.get("total_gold_spent", maxi(0, int(d.get("total_earned", 0)) - int(d.get("gold", 0)))))
+	var visual_score := saved_spent
+	for joined in Dictionary(d.get("residents", {})).values():
+		if bool(joined): visual_score += 1500
+	for defeated in Array(d.get("bosses_defeated", [])):
+		if bool(defeated): visual_score += 5000
+	var saved_revival := 4 if visual_score >= 25000 else (3 if visual_score >= 10000 else (2 if visual_score >= 3000 else (1 if visual_score >= 1000 else 0)))
 	return {
 		"exists": true,
 		"name": String(d.get("hero_name", "용사")),
 		"level": int(d.get("level", 1)),
 		"playtime": float(d.get("playtime", 0.0)),
-		"revival": revival_stage_from_count(construction_count),
+		"revival": saved_revival,
 		"run": int(d.get("run_count", 1)),
 	}
 
@@ -588,6 +614,7 @@ func reset_all() -> void:
 	# 새 모험의 백지 상태 — 모든 것이 기본값으로 (2주차와 달리 영구물도 지운다)
 	gold = 0
 	total_earned = 0
+	total_gold_spent = 0
 	level = 1
 	exp = 0
 	run_count = 1
@@ -603,7 +630,7 @@ func reset_all() -> void:
 	bosses_defeated = [false, false, false, false, false, false]
 	posters_f = [0, 0, 0, 0, 0, 0]
 	extra_pots = 0
-	buildings = {"inn": false, "church": false, "smith": false, "chest": false, "casino": false, "bard": false, "medalking": false, "shop": false, "bank": false, "weaponshop": false, "train": false, "stable": false}
+	buildings = {"inn": false, "church": false, "smith": false, "chest": false, "casino": false, "bard": false, "medalking": false, "shop": false, "bank": false, "weaponshop": false, "train": false, "stable": false, "treasure": false, "digsite": false, "tactics": false, "hq": false}
 	fixtures = {"board": false, "well": false, "frogstatue": false, "lamppost": false, "scarecrow": false}
 	recruits_spawned = {"knight": false, "mage": false, "priest": false, "warrior": false, "monkf": false}
 	discovered = {}
@@ -614,8 +641,7 @@ func reset_all() -> void:
 	kill_counts = {}
 	medals_small = 0
 	medals_spent = 0
-	keys = {"thief": false, "magic": false, "sea": false}
-	opened = {"warehouse": false, "redchest": false}
+	keys = {"sea": false}
 	signpost_seen = false
 	ui_unlocked = {"desc": false, "gold": false, "party": false, "quest": false}
 	epic_verses = 0
@@ -627,6 +653,10 @@ func reset_all() -> void:
 	party_ids = ["hero"]
 	companion_weapons = {}
 	companion_forge = {}
+	companion_weapon_tiers = {}
+	companion_training = {}
+	companion_weapon_tiers = {}
+	companion_training = {}
 	new_flags = []
 	book_seen = {"hero": true}
 	combo_gauge = 0.0
@@ -648,9 +678,14 @@ func reset_all() -> void:
 	lunch_until = 0.0
 	silver_seen = false
 	titles = []
-	casino_up = {"jackpot": 0, "consol": 0, "hold": 0}
+	casino_up = {"jackpot": 0, "consol": 0, "hold": 0, "bet": 0}
+	casino_miss_streak = 0
+	casino_spins = 0
+	treasure_wins = 0
+	battle_snapshots = []
 	scarecrow_until = 0.0
 	_building_ack.clear()
+	ensure_core_facilities()
 	for k in stats.keys():
 		stats[k] = 0
 	_reset_party()
@@ -659,6 +694,8 @@ func _reset_party() -> void:
 	companions_owned = {"hero": true}
 	party_ids = ["hero"]
 	companion_weapons = {}
+	companion_weapon_tiers = {}
+	companion_training = {}
 	rebuild_party()
 
 func rebuild_party() -> void:
@@ -670,7 +707,7 @@ func rebuild_party() -> void:
 		var d: Dictionary = COMPANIONS[id]
 		members.append({
 			"cls": id, "name": d["name"], "hp": d["hp"], "max_hp": d["hp"],
-			"ghost": false, "weapon_lv": int(companion_weapons.get(id, 0)),
+			"ghost": false, "weapon_lv": int(companion_weapons.get(id, 1)),
 		})
 	refresh_max_hp()
 	heal_all_full()
@@ -737,18 +774,21 @@ func companion_count() -> int:
 # ---------------------------------------------------------------- 스탯 공식
 
 func member_atk_flat(idx: int) -> int:
-	# 플랫 = 무기점의 영역 (v3.4 §B-5 — 주 성장축)
+	# 무기 티어 Lv.1은 항상 이전 티어 Lv.10보다 강하다.
 	var m: Dictionary = members[idx]
 	var base: int = COMPANIONS[m["cls"]]["atk"]
-	var flat: int = base + int(m["weapon_lv"]) * 2 + int(level / 2.0) + up["gear_atk"] * 2  # v4.3 장비:무기
+	var tier := int(companion_weapon_tiers.get(m["cls"], 0))
+	var weapon_lv := clampi(int(m["weapon_lv"]), 1, 10)
+	var tier_base: int = [0, 31, 72][clampi(tier, 0, 2)]
+	var per_level: int = [3, 4, 5][clampi(tier, 0, 2)]
+	var flat: int = base + tier_base + (weapon_lv - 1) * per_level + int(level / 2.0) + up["gear_atk"] * 2
 	# 로토의 검 고유 보너스 (v3.8 §B-6 — 스토리 성장은 교체 이벤트로)
 	if m["cls"] == "hero" and sword_rock >= 2:
 		flat += 6
 	return flat
 
 func forge_mult(cls: String) -> float:
-	# 벼림 보정 = 대장간의 영역 (% 배율 — 플랫이 클수록 가치 상승)
-	return 1.0 + 0.03 * int(companion_forge.get(cls, 0))
+	return 1.0  # v4.0: 벼림은 별도 배율이 아니라 단련도 효율로 통합
 
 func member_atk(idx: int) -> int:
 	var m: Dictionary = members[idx]
@@ -858,8 +898,10 @@ func add_combo_gauge() -> void:
 	combo_gauge = minf(1.0, combo_gauge + 0.08)
 
 func max_windows() -> int:
-	# v3.3 §A 철칙 3: 회차 보너스는 소폭 시작 부스트까지만 (+1 캡)
-	var n: int = 1 + up["win_cap"] + mini(run_count - 1, 1) + casino_wincap
+	const CURVE := [1, 2, 3, 5, 8, 12]
+	var window_level: int = int(up["win_cap"])
+	var n: int = (CURVE[window_level] if window_level < CURVE.size() else 12 + (window_level - 5) * 2) \
+		+ mini(run_count - 1, 1) + casino_wincap
 	if medal_on("watch_eye"):
 		n += 1
 	if medal_on("coward_flag"):
@@ -884,14 +926,14 @@ func move_speed() -> float:
 	return v
 
 func turn_interval() -> float:
-	var t := 1.1 * pow(0.93, up["battle_speed"])
+	var t := 1.1
 	if medal_on("coward_flag"):
 		t *= 0.5
 	return t
 
 func gold_multiplier() -> float:
 	# v3.3 §A: 회차 배율 스케일링 금지 — 프레스티지 수학이 침투하면 2주차가 의무가 된다
-	var g := pow(1.15, up["gold_mult"]) * (1.0 + 0.08 * int(up["gear_gold"]))  # v4.3 장비:벨트
+	var g := pow(1.15, up["gold_mult"]) * pow(1.12, up["bounty"]) * (1.0 + 0.08 * int(up["gear_gold"]))
 	if medal_on("aqua_regia"):
 		g *= 2.0
 	var steal_s := passive_scale("steal")
@@ -918,6 +960,7 @@ func try_spend(v: int) -> bool:
 	if gold < v:
 		return false
 	gold -= v
+	total_gold_spent += maxi(0, v)
 	gold_changed.emit(gold)
 	return true
 
@@ -1033,11 +1076,45 @@ func pick_target() -> int:
 # ---------------------------------------------------------------- 무기 (대장간)
 
 func weapon_cost(idx: int) -> int:
-	return price(int(25 * pow(1.75, members[idx]["weapon_lv"])))
+	var cls := String(members[idx]["cls"])
+	var next_tier := int(companion_weapon_tiers.get(cls, 0)) + 1
+	return price([0, 450, 4500][clampi(next_tier, 0, 2)])
 
 func forge_cost(idx: int) -> int:
-	# 대장간 벼림 — 선택적 손맛 보너스라 무기점보다 싸게
-	return price(int(18 * pow(1.6, int(companion_forge.get(members[idx]["cls"], 0)))))
+	return price(int(18 * pow(1.35, maxi(0, int(members[idx]["weapon_lv"]) - 1))))
+
+func weapon_tier(idx: int) -> int:
+	return int(companion_weapon_tiers.get(members[idx]["cls"], 0))
+
+func can_buy_weapon_tier(idx: int) -> bool:
+	var tier := weapon_tier(idx)
+	return tier < 2
+
+func buy_weapon_tier(idx: int) -> bool:
+	if not can_buy_weapon_tier(idx) or not try_spend(weapon_cost(idx)):
+		return false
+	var cls := String(members[idx]["cls"])
+	companion_weapon_tiers[cls] = weapon_tier(idx) + 1
+	# 벼림 단계는 무기 이름을 바꿔도 영구 계승한다.
+	set_weapon_lv(cls, int(companion_weapons.get(cls, 1)))
+	return true
+
+func training_progress(cls: String) -> int:
+	return int(companion_training.get(cls, 0))
+
+func train_weapon(cls: String, multiplier: float = 1.0) -> bool:
+	var idx := -1
+	for i in members.size():
+		if members[i]["cls"] == cls: idx = i; break
+	if idx < 0:
+		return false
+	var gain := maxi(1, int(40.0 * multiplier * (1.0 + 0.25 * up["forge_eff"])))
+	var progress := training_progress(cls) + gain
+	while progress >= 100:
+		progress -= 100
+		set_weapon_lv(cls, int(companion_weapons.get(cls, 1)) + 1)
+	companion_training[cls] = progress
+	return true
 
 func lantern_radius() -> float:
 	# 밤 시야 반경 (v3.4 §B-4). 최종 단계 = 대열 전체가 빛의 뱀
@@ -1065,22 +1142,34 @@ const WEAPON_NAMES := {
 func weapon_name(idx: int) -> String:
 	var m: Dictionary = members[idx]
 	var lv: int = m["weapon_lv"]
+	var tier := weapon_tier(idx)
 	if m["cls"] == "hero":
-		# v3.8 §B-6: 용사도 무기점·대장간 정식 편입. 로토의 검 = 무기 "교체" (강화 레벨 승계)
-		var base_h := "아빠의 목검"
-		if sword_rock >= 2:
-			base_h = "전설의 검·진" if (roto_complete() and epic_complete()) else "로토의 검"
-		return base_h + (" +%d" % lv if lv > 0 else "")
+		var hero_names := ["아빠의 목검", "병사의 검", "로토의 검"]
+		return "%s · 벼림 %d" % [hero_names[clampi(tier, 0, 2)], lv]
 	if WEAPON_NAMES.has(m["cls"]):
 		var stages: Array = WEAPON_NAMES[m["cls"]]
-		var base2: String = stages[2 if lv >= 10 else (1 if lv >= 5 else 0)]
-		return base2 + (" +%d" % lv if lv > 0 else "")
+		return "%s · 벼림 %d" % [stages[clampi(tier, 0, stages.size() - 1)], lv]
 	var base: String = COMPANIONS[m["cls"]].get("weapon", "여행자의 지팡이")
 	if lv >= 10:
 		base = "빛나는 " + base
 	elif lv >= 5:
 		base = "강철 " + base
-	return base + (" +%d" % lv if lv > 0 else "")
+	return "%s · 벼림 %d" % [base, lv]
+
+func next_weapon_name(idx: int) -> String:
+	var m: Dictionary = members[idx]
+	var next_tier := clampi(weapon_tier(idx) + 1, 0, 2)
+	if m["cls"] == "hero":
+		return ["아빠의 목검", "병사의 검", "로토의 검"][next_tier]
+	if WEAPON_NAMES.has(m["cls"]):
+		return WEAPON_NAMES[m["cls"]][next_tier]
+	return "새로운 " + String(COMPANIONS[m["cls"]].get("weapon", "무기"))
+
+func next_tier_attack(idx: int) -> int:
+	var m: Dictionary = members[idx]
+	var next_tier := clampi(weapon_tier(idx) + 1, 0, 2)
+	var base: int = COMPANIONS[m["cls"]]["atk"]
+	return base + [0, 31, 72][next_tier] + maxi(0, int(m["weapon_lv"]) - 1) * 3 + int(level / 2.0) + up["gear_atk"] * 2
 
 # ---------------------------------------------------------------- 칭호 (v3.2 §B-8 — 플레이 습관의 거울)
 
@@ -1125,6 +1214,7 @@ func do_prestige() -> void:
 	run_count += 1
 	gold = 0
 	total_earned = 0
+	total_gold_spent = 0
 	level = 1
 	exp = 0
 	kills = 0
@@ -1137,15 +1227,14 @@ func do_prestige() -> void:
 		up[k] = 0
 	for k in assistants.keys():
 		assistants[k] = 0
-	buildings = {"inn": false, "church": false, "smith": false, "chest": false, "casino": false, "bard": false, "medalking": false, "shop": false, "bank": false, "weaponshop": false, "train": false, "stable": false}
+	buildings = {"inn": false, "church": false, "smith": false, "chest": false, "casino": false, "bard": false, "medalking": false, "shop": false, "bank": false, "weaponshop": false, "train": false, "stable": false, "treasure": false, "digsite": false, "tactics": false, "hq": false}
 	fixtures = {"board": false, "well": false, "frogstatue": false, "lamppost": false, "scarecrow": false}
 	recruits_spawned = {"knight": false, "mage": false, "priest": false, "warrior": false, "monkf": false}
 	residents = {}
 	kill_counts = {}
 	medals_small = 0
 	medals_spent = 0
-	keys = {"thief": false, "magic": false, "sea": false}
-	opened = {"warehouse": false, "redchest": false}
+	keys = {"sea": false}
 	signpost_seen = false
 	golden_first_done = false
 	golden_info = false
@@ -1169,9 +1258,14 @@ func do_prestige() -> void:
 	member_tactics = {}
 	lunch_until = 0.0
 	silver_seen = false
-	casino_up = {"jackpot": 0, "consol": 0, "hold": 0}
+	casino_up = {"jackpot": 0, "consol": 0, "hold": 0, "bet": 0}
+	casino_miss_streak = 0
+	casino_spins = 0
+	treasure_wins = 0
+	battle_snapshots = []
 	scarecrow_until = 0.0
 	_building_ack.clear()
+	ensure_core_facilities()
 	# 영구 유지: 훈장 도감/장착, 서사시 이력, 도감(discovered), 필살작 기록, 카지노 상한, book_seen, combo_hint_known, hero_name, titles, stats, tactic_known
 	_reset_party()
 	# 2주차 시작 부스트 — 기사가 배웅 나와 있고, 엄마가 여비를 찔러준다
@@ -1191,7 +1285,7 @@ func save_game() -> void:
 		mem_save.append({"cls": m["cls"], "weapon_lv": m["weapon_lv"], "hp": m["hp"], "ghost": m["ghost"]})
 	var data := {
 		"version": SAVE_VERSION,
-		"gold": gold, "total_earned": total_earned,
+		"gold": gold, "total_earned": total_earned, "total_gold_spent": total_gold_spent,
 		"level": level, "exp": exp, "run_count": run_count, "kills": kills,
 		"up": up,
 		"fields_unlocked": fields_unlocked, "bosses_defeated": bosses_defeated,
@@ -1201,15 +1295,18 @@ func save_game() -> void:
 		"golden_info": golden_info, "ending_seen": ending_seen,
 		"members": mem_save,
 		"coins": coins, "epic_verses": epic_verses, "smith_perfects": smith_perfects,
+		"casino_miss_streak": casino_miss_streak, "casino_spins": casino_spins, "treasure_wins": treasure_wins,
+		"battle_snapshots": battle_snapshots,
 		"casino_wincap": casino_wincap, "assistants": assistants,
 		"medals_owned": medals_owned, "medals_equipped": medals_equipped,
 		"ui_unlocked": ui_unlocked, "building_ack": _building_ack,
 		"residents": residents, "kill_counts": kill_counts,
 		"medals_small": medals_small, "medals_spent": medals_spent,
-		"keys": keys, "opened": opened, "signpost_seen": signpost_seen,
+		"keys": keys, "signpost_seen": signpost_seen,
 		# v3.1
 		"companions_owned": companions_owned, "party_ids": party_ids,
-		"companion_weapons": companion_weapons, "companion_forge": companion_forge,
+			"companion_weapons": companion_weapons, "companion_forge": companion_forge,
+			"companion_weapon_tiers": companion_weapon_tiers, "companion_training": companion_training,
 		"new_flags": new_flags, "book_seen": book_seen,
 		"arts_owned": arts_owned, "equipped_art": equipped_art,
 		"combo_gauge": combo_gauge, "combo_hint_known": combo_hint_known,
@@ -1257,6 +1354,7 @@ func load_game() -> void:
 		return  # v3 이전 세이브는 구조가 달라 버린다 (프로토타입)
 	gold = int(d.get("gold", 0))
 	total_earned = int(d.get("total_earned", 0))
+	total_gold_spent = int(d.get("total_gold_spent", maxi(0, total_earned - gold)))
 	level = int(d.get("level", 1))
 	exp = int(d.get("exp", 0))
 	run_count = int(d.get("run_count", 1))
@@ -1281,9 +1379,7 @@ func load_game() -> void:
 	var kk: Dictionary = d.get("keys", {})
 	for k in keys.keys():
 		keys[k] = bool(kk.get(k, false))
-	var op: Dictionary = d.get("opened", {})
-	for k in opened.keys():
-		opened[k] = bool(op.get(k, false))
+	# v8 이전 잠긴 창고/붉은 상자 상태는 의도적으로 읽지 않는다.
 	signpost_seen = bool(d.get("signpost_seen", false))
 	var u: Dictionary = d.get("up", {})
 	for k in up.keys():
@@ -1299,6 +1395,7 @@ func load_game() -> void:
 		fixtures["board"] = true
 	if not fx.has("frogstatue") and buildings.get("bank", false):
 		fixtures["frogstatue"] = true
+	ensure_core_facilities()
 	var r: Dictionary = d.get("recruits_spawned", {})
 	for k in recruits_spawned.keys():
 		recruits_spawned[k] = bool(r.get(k, false))
@@ -1308,6 +1405,10 @@ func load_game() -> void:
 	epic_verses = int(d.get("epic_verses", 0))
 	smith_perfects = int(d.get("smith_perfects", 0))
 	casino_wincap = int(d.get("casino_wincap", 0))
+	casino_miss_streak = int(d.get("casino_miss_streak", 0))
+	casino_spins = int(d.get("casino_spins", 0))
+	treasure_wins = int(d.get("treasure_wins", 0))
+	battle_snapshots = d.get("battle_snapshots", [])
 	var asst: Dictionary = d.get("assistants", {})
 	for k in assistants.keys():
 		assistants[k] = int(asst.get(k, 0))
@@ -1333,12 +1434,21 @@ func load_game() -> void:
 		party_ids = pf2 if not pf2.is_empty() else ["hero"]
 		companion_weapons = d.get("companion_weapons", {})
 		companion_forge = d.get("companion_forge", {})
+		companion_weapon_tiers = d.get("companion_weapon_tiers", {})
+		companion_training = d.get("companion_training", {})
+		if not d.has("companion_weapon_tiers"):
+			for cls in companion_weapons.keys():
+				var legacy_lv := int(companion_weapons[cls])
+				companion_weapon_tiers[cls] = clampi(legacy_lv / 10, 0, 2)
+				companion_weapons[cls] = clampi(legacy_lv % 10 + 1, 1, 10)
 		new_flags = d.get("new_flags", [])
 		book_seen = d.get("book_seen", {"hero": true})
 	else:
 		companions_owned = {"hero": true}
 		party_ids = []
 		companion_weapons = {}
+		companion_weapon_tiers = {}
+		companion_training = {}
 		for ms in mem:
 			var c: String = ms["cls"]
 			# v3.0 warrior 슬롯은 v3.1 로스터에도 존재 — 그대로 편성

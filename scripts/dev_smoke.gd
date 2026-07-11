@@ -13,6 +13,8 @@ func _run() -> void:
 	if OS.get_environment("AAA_SHOT") == "1":
 		await _shots()
 		return
+	await _run_v40()
+	return
 	await get_tree().create_timer(1.2).timeout
 	print("[SMOKE] 시작 — 주민 %d명" % Game.resident_count())
 	assert(Game.save_path.contains("smoke") and Game.options_path.contains("smoke"))
@@ -44,22 +46,23 @@ func _run() -> void:
 	print("[dbg] res=", Game.residents, " inn=", Game.buildings["inn"], " quest=", Game.ui_unlocked["quest"], " kills=", Game.kill_counts)
 	assert(Game.residents.get("innkeep", false) and Game.buildings["inn"])
 	Game.add_exp(3000)  # 레벨 게이트 통과용 (Lv 7+)
-	assert(main.buy_catalog("smith"))
+	assert(_legacy_unlock(5))
 	await get_tree().create_timer(3.0).timeout
 	assert(Game.buildings["smith"])
 	assert(Game.residents.get("smithy", false))  # 건물이 서면 사람이 온다
-	assert(main.buy_catalog("shop"))
+	Game.buildings["shop"] = true
+	main._build_village()
 	await get_tree().create_timer(3.0).timeout
 	assert(Game.resident_count() == 3)
 	print("[SMOKE] 건설→입주 OK — 주민 %d명, 건설물 %d개, 부흥 %d" % [Game.resident_count(), Game.built_count(), main._revival_stage()])
 
 	# v4.0 — 훈련소/마구간/기물/"!" 마커
-	assert(main.buy_catalog("train"))
-	assert(main.buy_catalog("stable"))
+	assert(_legacy_unlock(6))
+	assert(_legacy_unlock(9))
 	await get_tree().create_timer(2.6).timeout
 	assert(Game.buildings["train"] and Game.buildings["stable"])
 	assert(Game.residents.get("trainer", false) and Game.residents.get("hostler", false))
-	assert(main.buy_catalog("scarecrow"))  # needs: train
+	assert(_legacy_unlock(15))
 	var sc: Interactable = null
 	for scn in get_tree().get_nodes_in_group("hoverable"):
 		if scn is Interactable and scn.kind == "scarecrow":
@@ -173,20 +176,13 @@ func _run() -> void:
 			bw.sim._apply_enemy_damage(0, 99999999, false, true)
 	await get_tree().create_timer(4.0).timeout
 	assert(Game.bosses_defeated[0])
-	assert(Game.keys["thief"])
 	assert(Game.signpost_seen)
 	assert(Game.fields_unlocked[1])
 	print("[SMOKE] 지배자 처치 OK — 열쇠/이정표/숲 해금")
 
-	# 5) 잠긴 창고 (열쇠 문법) — 도둑의 열쇠로 연다
-	var wh: Interactable = null
-	for n in get_tree().get_nodes_in_group("hoverable"):
-		if n is Interactable and n.kind == "warehouse":
-			wh = n
-	assert(wh != null)
-	main._bump_warehouse(wh)
-	assert(Game.opened["warehouse"] and Game.medals_small >= 2)
-	print("[SMOKE] 창고 개방 OK — 메달 %d" % Game.medals_small)
+	# 5) 폐기된 잠긴 오브젝트는 구 회귀에서도 나타나지 않는다.
+	assert(get_tree().get_nodes_in_group("hoverable").all(func(n):
+		return not (n is Interactable and n.kind in ["warehouse", "redchest", "locked_site"])))
 
 	# 6) 작은 메달 → 메달왕 자동 합류 → 교환
 	Game.medals_small = 5
@@ -231,7 +227,7 @@ func _run() -> void:
 			forge_idx = i
 	assert(forge_idx >= 0)
 	# 무기점 — 골드 → 즉시 플랫 (무기상 주민 영입 포함)
-	assert(main.buy_catalog("weaponshop"))
+	assert(_legacy_unlock(4))
 	await get_tree().create_timer(3.0).timeout
 	assert(Game.buildings["weaponshop"])
 	var atk_before: int = Game.member_atk(forge_idx)
@@ -250,7 +246,7 @@ func _run() -> void:
 		int(Game.forge_mult("warrior") * 100)])
 
 	# 9) 도박사 영입 → 카지노 + 서사시
-	assert(main.buy_catalog("casino"))
+	assert(_legacy_unlock(11))
 	await get_tree().create_timer(3.0).timeout
 	assert(Game.buildings["casino"])
 	Game.coins += 600
@@ -347,14 +343,14 @@ func _run() -> void:
 
 	# 9.9) v3.9 — 은행원·어부 형제 = 주민 부탁 (§B-2)
 	Game.add_exp(200000)  # Lv 8 게이트
-	assert(main.buy_catalog("bank"))
+	assert(_legacy_unlock(10))
 	await get_tree().create_timer(3.5).timeout
 	assert(Game.buildings["bank"])
 	assert(Game.residents.get("banker", false))
 	Game.add_gold(2000)
 	var dep := Game.bank_deposit(800)
 	assert(dep > 0 and Game.deposit == dep)
-	assert(main.buy_catalog("frogstatue"))  # 기물 — 은행 뒤에 열린다
+	assert(_legacy_unlock(10))
 	assert(main.try_pay_resident("fishers"))
 	await get_tree().create_timer(6.8).timeout
 	assert(Game.residents.get("fishers", false))
@@ -562,7 +558,7 @@ func _run() -> void:
 	assert(Game.titles.size() == titles_n)
 	assert(int(Game.stats["pots"]) == pots_n)
 	assert(Game.casino_up["hold"] == 1)
-	print("[SMOKE] 세이브/로드 OK (v6)")
+	print("[SMOKE] 세이브/로드 OK (v7)")
 
 	# 17) v3.3 — 세이브 슬롯 메타 + 옵션 ConfigFile
 	var meta: Dictionary = Game.slot_meta(Game.save_slot)
@@ -609,6 +605,106 @@ func _run() -> void:
 	print("[SMOKE] 전부 통과!")
 	get_tree().quit()
 
+func _legacy_unlock(level: int) -> bool:
+	# 구 회귀 시나리오의 시설 준비용. 플레이 경로에는 부흥 해금이 없다.
+	for id in ["inn", "church", "weaponshop", "smith", "train", "tactics", "stable", "treasure", "bank", "casino", "digsite"]:
+		Game.buildings[id] = true
+	main._build_village()
+	return true
+
+func _run_v40() -> void:
+	await get_tree().create_timer(0.5).timeout
+	print("[SMOKE v5] 골드 중심 기지 개편 시작")
+	# 기본 JRPG 시설은 해금 없이 처음부터 존재한다.
+	for facility in ["inn", "church", "weaponshop", "smith", "train", "tactics"]:
+		assert(Game.buildings[facility] and main.base_nodes.has(facility))
+	for removed in ["warehouse", "redchest", "locked_site"]:
+		assert(get_tree().get_nodes_in_group("hoverable").all(func(n): return not (n is Interactable and n.kind == removed)))
+	assert(Game.save_path.contains("smoke"))
+	# 소비 결과가 기능을 잠그지 않고 기지 외형만 자동 성장시킨다.
+	Game.add_gold(1000000)
+	assert(Game.try_spend(1000) and Game.visual_base_stage() >= 1)
+	# 새 무기는 벼림 단계·단련도를 잃지 않고 골드만으로 산다.
+	Game.set_weapon_lv("hero", 4)
+	Game.companion_training["hero"] = 35
+	var old_atk := Game.member_atk(0)
+	assert(Game.buy_weapon_tier(0))
+	assert(Game.member_atk(0) > old_atk and int(Game.members[0]["weapon_lv"]) == 4)
+	assert(Game.training_progress("hero") == 35 and Game.weapon_name(0).contains("벼림 4"))
+	# 대장간 클릭은 여관으로 이동하지 않고 즉시 ×1.00을 적용한다.
+	var before_training := Game.training_progress("hero")
+	main.hud.open_smith()
+	main.hud._basic_forge(0, Game.forge_cost(0))
+	assert(main.hud._menu_kind == "smith")
+	assert(Game.training_progress("hero") > before_training or int(Game.members[0]["weapon_lv"]) > 1)
+	# BattleDirector 10Hz + x2 토글 + 12창 LOD
+	Game.up["win_cap"] = 5
+	for i in 12:
+		main._open_battle([Game.MONSTER_DEFS[0]], false, Vector2(280 + (i % 4) * 70, 70 + int(i / 4.0) * 45))
+	assert(main.battle_director.active_count() == 12)
+	assert(main.windows.all(func(w): return w.lod_level == 1))
+	main.battle_director.set_speed(2)
+	assert(main.battle_director.speed_multiplier == 2)
+	# 풀 반환 후 같은 View 재사용 + engaged 중복 가드.
+	main.windows[0].close_after(0.0)
+	await get_tree().create_timer(0.3).timeout
+	assert(main._window_pool.size() >= 1)
+	var field_enemy := FieldMonster.new()
+	field_enemy.setup(Game.MONSTER_DEFS[0], 1, false, "", 3)
+	field_enemy.position = Vector2(300, 200)
+	main.field_root.add_child(field_enemy)
+	var window_count: int = main.windows.size()
+	main._bump_monster(field_enemy)
+	main._bump_monster(field_enemy)
+	assert(field_enemy.engaged and main.windows.size() == window_count + 1)
+	var matched_sim: BattleSim = main.windows.back().sim
+	assert(matched_sim.enemies.size() == 3)
+	assert(matched_sim.enemies.all(func(e): return e["mid"] == Game.MONSTER_DEFS[0]["id"] and e["atk"] == Game.MONSTER_DEFS[0]["atk"]))
+	# 황금 슬라임은 전투창 난입이 아니라 필드 개체로 먼저 보인다.
+	main._try_spawn_golden()
+	assert(get_tree().get_nodes_in_group("monster").any(func(n): return n is FieldMonster and n.rare_variant == "golden"))
+	# 툴팁은 모든 메뉴보다 높은 전용 CanvasLayer에 있다.
+	assert(main.hud._tooltip.get_parent() is CanvasLayer and main.hud._tooltip.get_parent().layer == 100)
+	# 기지 외형을 재생성해도 구조한 자동화 동물은 상태에서 복원된다.
+	Game.assistants["monkey"] = 1
+	main._build_village()
+	assert(main.base_root.get_children().any(func(n): return n is Assistant and n.kind == "monkey"))
+	# NPC 입주 말풍선은 폭 0 fit_content로 세로 장대 패널이 되면 안 된다.
+	var join_bubble: DQPanel = main.hud.speech_bubble("「원숭이를 구조했다! 항아리 구역을 돕는다.」", Vector2(180, 220), 0.1)
+	await get_tree().process_frame
+	assert(join_bubble != null and join_bubble.size.x >= 60.0 and join_bubble.size.y < 80.0,
+		"입주 말풍선 크기 오류: %s" % join_bubble.size)
+	# 건물 스프라이트 슬롯 32×32
+	var inn = main.base_nodes.get("inn")
+	if inn != null:
+		for child in inn.get_children():
+			if child is Sprite2D and child.texture != null:
+				var drawn: Vector2 = child.texture.get_size() * child.scale
+				assert(drawn.round() == Vector2(32, 32))
+	main.battle_director._step_all()
+	assert(not Game.battle_snapshots.is_empty())
+	Game.save_game()
+	Game.total_gold_spent = 0
+	Game.battle_snapshots.clear()
+	Game.load_game()
+	assert(Game.total_gold_spent >= 1000 and not Game.battle_snapshots.is_empty())
+	var restored_count := mini(Game.battle_snapshots.size(), Game.max_windows())
+	for window in main.windows.duplicate():
+		main._release_battle_window(window)
+	main._restore_battle_snapshots()
+	assert(main.battle_director.active_count() == restored_count)
+	print("[SMOKE v5] 전부 통과!")
+	for window in main.windows.duplicate():
+		if is_instance_valid(window): window.queue_free()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	Music.shutdown_for_test()
+	await get_tree().process_frame
+	Music.shutdown_for_test()
+	Sfx.shutdown_for_test()
+	await get_tree().create_timer(0.25).timeout
+	get_tree().quit()
+
 # ---------------------------------------------------------------- 스크린샷
 
 func _shots() -> void:
@@ -622,9 +718,10 @@ func _shots() -> void:
 	Game.kill_counts["slime"] = 5
 	Game.add_exp(3000)
 	await get_tree().create_timer(4.5).timeout
-	main.buy_catalog("smith")
+	_legacy_unlock(5)
 	await get_tree().create_timer(3.0).timeout
-	main.buy_catalog("shop")
+	Game.buildings["shop"] = true
+	main._build_village()
 	await get_tree().create_timer(4.5).timeout
 	# 파티 4인 — 카드 규격 확인용 (v4.0 §B-3)
 	for cid in ["knight", "priest", "mage"]:

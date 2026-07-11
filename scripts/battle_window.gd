@@ -1,11 +1,12 @@
 class_name BattleWindow
 extends Control
-## 드퀘식 전투창 — BattleSim 하나를 구독해 그리는 뷰. 창마다 독립 턴 박자 (비동기).
+## 드퀘식 전투창 — BattleSim 하나를 구독해 그리는 뷰. 진행은 BattleDirector가 담당한다.
 ## 드퀘다움: 이중 테두리 / 타자기 텍스트+블립음+▼ / 펼침 등장 / 몬스터 중앙 크게
 
 signal golden_hover_changed(hovering: bool)
 signal flee_requested
 signal clicked                      # 스택 셔플용 (v3.4 §B-1)
+signal release_requested(window: BattleWindow)
 
 var sim: BattleSim
 var is_boss := false
@@ -26,6 +27,8 @@ var _golden_hovering := false
 var _squish_cd := 0.0
 var _wiggle_t := 0.0
 var _t := 0.0
+var lod_level := 0
+var _initialized := false
 
 # 타자기 (v3.8: RichTextLabel + visible_characters — 자동 채색과 공존)
 var _msg_queue: Array[String] = []
@@ -36,6 +39,8 @@ var _type_t := 0.0
 static var _strip_rx: RegEx = null
 
 func setup(p_sim: BattleSim, p_size: Vector2, boss: bool) -> void:
+	if _initialized:
+		_reset_for_pool()
 	sim = p_sim
 	is_boss = boss
 	_base_width = p_size.x
@@ -51,8 +56,32 @@ func setup(p_sim: BattleSim, p_size: Vector2, boss: bool) -> void:
 	sim.victory.connect(_on_victory)
 	sim.frogified.connect(_on_frogified)
 	sim.enemy_acted.connect(_on_enemy_acted)
-	mouse_entered.connect(_on_mouse_entered)
-	mouse_exited.connect(_on_mouse_exited)
+	if not _initialized:
+		mouse_entered.connect(_on_mouse_entered)
+		mouse_exited.connect(_on_mouse_exited)
+	_initialized = true
+
+func _reset_for_pool() -> void:
+	for node in _enemy_nodes:
+		if is_instance_valid(node): node.free()
+	_enemy_nodes.clear()
+	_enemy_tex_sizes.clear()
+	_enemy_base_pos.clear()
+	_msg_queue.clear()
+	_lines_bb.clear()
+	_lines_plain.clear()
+	closing = false
+	modulate = Color.WHITE
+	rotation = 0.0
+	_goldened_cleanup()
+	if _log_label != null:
+		_log_label.clear()
+	_build_enemies.call_deferred()
+
+func _goldened_cleanup() -> void:
+	if _golden != null and is_instance_valid(_golden): _golden.free()
+	_golden = null
+	_golden_hovering = false
 
 ## 타자기 속도 튜닝 (v3.5 — 인스펙터에서 조절)
 @export var type_interval := 0.028       # 한 글자 간격 (초)
@@ -171,7 +200,6 @@ func apply_dock(pos: Vector2, sz: Vector2) -> void:
 func _process(delta: float) -> void:
 	if closing:
 		return
-	sim.tick(delta)
 	_t += delta
 	_squish_cd = maxf(0.0, _squish_cd - delta)
 	_type_tick(delta)
@@ -198,6 +226,15 @@ func _process(delta: float) -> void:
 		if hov != _golden_hovering:
 			_golden_hovering = hov
 			golden_hover_changed.emit(hov)
+
+func set_lod(level: int) -> void:
+	lod_level = clampi(level, 0, 2)
+	if _log_label != null:
+		_log_label.visible = lod_level < 2
+		_log_label.size.y = 26.0 if lod_level == 0 else 14.0
+	for i in _enemy_nodes.size():
+		if is_instance_valid(_enemy_nodes[i]):
+			_enemy_nodes[i].visible = lod_level < 2 or i == 0
 
 func is_golden_hovering() -> bool:
 	return _golden_hovering and sim != null and sim.golden_active
@@ -574,4 +611,4 @@ func close_after(delay: float) -> void:
 	tw.tween_interval(delay)
 	tw.tween_property(self, "scale", Vector2(0.85, 0.85), 0.12)
 	tw.parallel().tween_property(self, "modulate:a", 0.0, 0.12)
-	tw.tween_callback(queue_free)
+	tw.tween_callback(func(): release_requested.emit(self))
