@@ -64,7 +64,7 @@ const BUILD_CATALOG := [
 		"desc": "밤의 마을을 밝힌다",
 		"join": "가로등이 섰다. 밤이 조금 덜 무서워졌다."},
 	{"id": "scarecrow", "cat": "fixture", "name": "허수아비", "cost": 50, "needs": "train",
-		"desc": "두드리면 잔돈이 떨어진다 (쿨타임)",
+		"desc": "두드리면 30초간 전원 공격력 +25%",
 		"join": "허수아비가 섰다. 교관이 흐뭇하게 바라본다."},
 	{"id": "well", "cat": "fixture", "name": "우물", "cost": 80, "lv": 3,
 		"desc": "가끔 들여다보면 좋은 일이 있다",
@@ -94,8 +94,6 @@ const RESIDENTS := [
 	{"id": "fishers",  "name": "어부 형제", "building": "",      "cond": {"gold": 900, "lv": 4}, "pos": Vector2(204, 296),
 		"ask": "배를 잃었소. 도와주면 「바다의 노래」를 가르쳐 드리리다. (Lv 4부터)", "join": "어부 형제가 마을 끝에 자리를 잡았다!"},  # v3.9: 수중 열쇠 부탁 전담
 ]
-const REVIVAL_STEPS := [4, 8, 12, 15]   # v4.0 §B-4: 건설된 건물·기물 수 임계 → 마을 물리 확장 ("건물이 곧 진행바")
-
 var base_root: Node2D        # 마을 (불변 영역)
 var field_root: Node2D       # 필드 (우⅔ — 이정표로 통째 교체)
 var party: Party
@@ -287,14 +285,7 @@ func _play_popin() -> float:
 			continue
 		var delay := 0.35 + i * 0.07
 		var pitch := 0.65 + minf(float(i) * 0.045, 1.2)
-		get_tree().create_timer(delay).timeout.connect(func():
-			if not is_instance_valid(n):
-				return
-			n.visible = true
-			n.scale = Vector2(0.05, 0.05)
-			Sfx.play("pop", pitch)
-			var tw := create_tween()
-			tw.tween_property(n, "scale", Vector2.ONE, 0.22).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT))
+		get_tree().create_timer(delay).timeout.connect(_popin_node.bind(n.get_instance_id(), pitch))
 		i += 1
 	var total := 0.35 + i * 0.07 + 0.4
 	get_tree().create_timer(total).timeout.connect(func():
@@ -304,6 +295,16 @@ func _play_popin() -> float:
 		var tw := create_tween()
 		tw.tween_property(party, "scale", Vector2.ONE, 0.25).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT))
 	return total + 0.3
+
+func _popin_node(instance_id: int, pitch: float) -> void:
+	var node := instance_from_id(instance_id) as CanvasItem
+	if node == null:
+		return
+	node.visible = true
+	node.scale = Vector2(0.05, 0.05)
+	Sfx.play("pop", pitch)
+	var tw := create_tween()
+	tw.tween_property(node, "scale", Vector2.ONE, 0.22).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 # ================================================================ 타이틀 (v3.3 §B — "게임이 곧 메뉴다")
 
@@ -384,7 +385,7 @@ func return_to_title() -> void:
 	Game.skip_title = false
 	get_tree().reload_current_scene()
 
-# ================================================================ 마을 (좌⅓ — 주민 수가 곧 진행바)
+# ================================================================ 마을 (좌⅓ — 건설된 세계가 곧 진행바)
 
 func _build_village() -> void:
 	for c in base_root.get_children():
@@ -394,13 +395,13 @@ func _build_village() -> void:
 	# 마을 바닥 — 유저 맵(village.png 216×360)이 있으면 그것을, 없으면 절차 잔디+광장
 	var has_map: bool = _custom_bg(base_root, "res://assets/maps/village.png", Vector2.ZERO, Vector2(VILLAGE_W, ROOM.y))
 	if not has_map:
-		_repeat_sprite(base_root, "res://assets/Tiles/Grass_Middle.png", Rect2(0, 0, VILLAGE_W, ROOM.y), Vector2.ZERO, Color(1, 1, 1))
+		_repeat_sprite(base_root, "res://assets/tiles/Grass_Middle.png", Rect2(0, 0, VILLAGE_W, ROOM.y), Vector2.ZERO, Color(1, 1, 1))
 		var plaza := Rect2(56, 116, 108, 160)
 		if stage >= 1:
 			plaza = Rect2(24, 72, 172, 236)
 		if stage >= 2:
 			plaza = Rect2(12, 48, 196, 276)
-		_repeat_sprite(base_root, "res://assets/Tiles/Path_Middle.png", Rect2(0, 0, plaza.size.x, plaza.size.y), plaza.position, Color(1, 1, 1))
+		_repeat_sprite(base_root, "res://assets/tiles/Path_Middle.png", Rect2(0, 0, plaza.size.x, plaza.size.y), plaza.position, Color(1, 1, 1))
 	if stage >= 3 and not has_map:
 		# 성벽 일부 (임시 도형) — 4단계에 완성 (유저 맵이면 유저가 그린다)
 		var wall := Line2D.new()
@@ -472,12 +473,7 @@ func join_count() -> int:
 	return Game.resident_count() + Game.companion_count() - 1
 
 func _revival_stage() -> int:
-	var n := Game.built_count()  # v4.0: 사람이 아니라 건설물이 마을을 키운다
-	var s := 0
-	for t in REVIVAL_STEPS:
-		if n >= t:
-			s += 1
-	return s
+	return Game.revival_stage()
 
 func _repeat_sprite(root: Node2D, tex_path: String, region: Rect2, pos: Vector2, tint: Color) -> Sprite2D:
 	var s := Sprite2D.new()
@@ -536,7 +532,7 @@ func _build_field(f: int) -> void:
 	if _custom_bg(field_root, "res://assets/maps/field_%d.png" % f, Vector2(VILLAGE_W, 0), field_sz):
 		pass  # 유저 맵 사용 — 절차 잔디·장식 생략 (몬스터/오브젝트만 얹는다)
 	else:
-		_repeat_sprite(field_root, "res://assets/Tiles/Grass_Middle.png", Rect2(0, 0, field_sz.x, field_sz.y), Vector2(VILLAGE_W, 0), tint)
+		_repeat_sprite(field_root, "res://assets/tiles/Grass_Middle.png", Rect2(0, 0, field_sz.x, field_sz.y), Vector2(VILLAGE_W, 0), tint)
 		var decor_tex := "res://assets/objects/forest.png" if f <= 1 else "res://assets/objects/hill.png"
 		var decor_n := 10 if f == 1 else 5
 		if f == 4:
@@ -600,7 +596,6 @@ func _build_field(f: int) -> void:
 	if hud != null:
 		Music.play_field(f)  # 필드 변주 크로스페이드 (M1-b/c)
 	_spawn_boss(f)
-	_add_thing(field_root, "cheatpot", Vector2(560, 300))  # DEBUG: 보스 근처 치트 항아리 — 클릭/Space마다 +1000 G (나중에 이 줄만 지우면 됨)
 	for i in 7:
 		_spawn_monster(f)
 	if f == 1:
@@ -880,8 +875,6 @@ func _gaze_click(pos: Vector2) -> void:
 		"casino":
 			Sfx.play("click")
 			hud.open_casino()
-		"cheatpot":
-			_cheat_gold(it)
 		_:
 			# 상인의 텔레파시 — 멀리서도 건물 메뉴가 열린다 (몸 행위는 잠김)
 			if Game.up["telepathy"] > 0:
@@ -911,14 +904,6 @@ func _menu_opener_for(kind: String) -> Callable:
 		"weaponshop": return hud.open_weaponshop
 		"signpost": return hud.open_gate
 	return Callable()
-
-func _cheat_gold(it: Interactable) -> void:  # DEBUG: 나중에 이 함수째 지우면 됨
-	Game.add_gold(1000)
-	if Game.add_exp(Game.exp_to_next()):  # 딱 다음 레벨까지 — 레벨 1 상승
-		hud.levelup_ritual(Game.level)
-	Sfx.play("gold_big")
-	hud.popup("+1000 G  Lv%d" % Game.level, it.global_position, UILib.COL_GOLD)
-	hud.coin_burst(it.global_position, 6)
 
 # ================================================================ 합체기 (v3.1 §B-4 — 게이지→발광→클릭→필드 스윕)
 
@@ -1000,10 +985,15 @@ func _rain_fish() -> void:
 		var tw := create_tween()
 		tw.tween_interval(i * 0.12)
 		tw.tween_property(f, "position", land, 0.4).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
-		tw.tween_callback(func():
-			var g := maxi(1, int(randi_range(10, 25) * Game.gold_scale()))
-			_gain_gold(g, f.global_position, "coin", 2)
-			f.queue_free())
+		tw.tween_callback(_finish_fish_drop.bind(f.get_instance_id()))
+
+func _finish_fish_drop(instance_id: int) -> void:
+	var fish := instance_from_id(instance_id) as Sprite2D
+	if fish == null:
+		return
+	var g := maxi(1, int(randi_range(10, 25) * Game.gold_scale()))
+	_gain_gold(g, fish.global_position, "coin", 2)
+	fish.queue_free()
 
 # ================================================================ 서사시 사건 (v3.1 §B-2 — 절은 사건을 판다)
 
@@ -1042,17 +1032,20 @@ func _companion_walkin(id: String, join_msg: String) -> void:
 	hud.event("누군가 이쪽으로 걸어온다…", 2.5)
 	var tw := create_tween()
 	tw.tween_property(walker, "position", party.head_pos, 2.0)
-	tw.tween_callback(func():
-		if walker != null and is_instance_valid(walker):
-			walker.queue_free()
-		Game.own_companion(id)
-		Sfx.play("fanfare_big")
-		hud.event(join_msg, 4.0)
-		if Game.party_ids.has(id):
-			hud.toast("%s이(가) 일행에 들어왔다!" % Game.COMPANIONS[id]["name"], 3.0)
-		else:
-			hud.toast("자리가 없어 여관에서 기다린다. (여관 → 파티 편성)", 4.0)
-		Game.save_game())
+	tw.tween_callback(_finish_companion_walkin.bind(walker.get_instance_id(), id, join_msg))
+
+func _finish_companion_walkin(instance_id: int, id: String, join_msg: String) -> void:
+	var walker := instance_from_id(instance_id) as Sprite2D
+	if walker != null:
+		walker.queue_free()
+	Game.own_companion(id)
+	Sfx.play("fanfare_big")
+	hud.event(join_msg, 4.0)
+	if Game.party_ids.has(id):
+		hud.toast("%s이(가) 일행에 들어왔다!" % Game.COMPANIONS[id]["name"], 3.0)
+	else:
+		hud.toast("자리가 없어 여관에서 기다린다. (여관 → 파티 편성)", 4.0)
+	Game.save_game()
 
 func _thief_betray() -> void:
 	# 서사시의 백미 — 도적이 금고를 털어 떠난다. …그리고 돌아온다 (v3.1 §B-2-4)
@@ -1126,7 +1119,7 @@ func _update_hover() -> void:
 		hud.hide_bubble()
 
 func _is_gaze_target(n: Node2D) -> bool:
-	return n is Interactable and ((n.kind == "smith" and n.is_ready) or n.kind == "casino" or n.kind == "cheatpot")
+	return n is Interactable and ((n.kind == "smith" and n.is_ready) or n.kind == "casino")
 
 func _pick_at(pos: Vector2) -> Node2D:
 	var best: Node2D = null
@@ -1230,8 +1223,6 @@ func _on_bump(node: Node2D) -> void:
 		"gearshop":
 			Sfx.play("bump")
 			hud.open_gearshop()
-		"cheatpot":
-			_cheat_gold(it)
 		"bank":
 			Sfx.play("bump")
 			hud.open_bank()
@@ -1646,7 +1637,7 @@ func join_resident(r: Dictionary) -> void:
 	Game.residents[r["id"]] = true
 	Game.buildings[r["building"]] = true
 	var walker := Sprite2D.new()
-	walker.texture = load("res://assets/NPCs/village_chief.png")
+	walker.texture = load("res://assets/npcs/village_chief.png")
 	walker.modulate = Color(randf_range(0.7, 1.0), randf_range(0.7, 1.0), randf_range(0.7, 1.0))
 	walker.position = Vector2(108, 352)
 	walker.offset = Vector2(0, -13)
@@ -1656,25 +1647,28 @@ func join_resident(r: Dictionary) -> void:
 	var walk_to: Vector2 = BUILD_POS[r["building"]] if r["building"] != "" else r.get("pos", Vector2(200, 300))
 	var tw := create_tween()
 	tw.tween_property(walker, "position", walk_to, 2.2)
-	tw.tween_callback(func():
-		# 걷는 도중 부흥 재건축(_build_village)이 끼어들면 walker/시설이 이미 처리돼 있다
-		if walker != null and is_instance_valid(walker):
-			walker.queue_free()
-		var b: String = r["building"]
-		if b == "" or not (base_nodes.has(b) and is_instance_valid(base_nodes[b])):
-			_place_resident(r, true)
-		Sfx.play("build")
-		hud.speech_bubble("「%s」" % String(r["join"]), BUILD_POS.get(r["building"], Vector2(108, 300)) + Vector2(12, -18), 3.5)
-		hud.event(r["join"], 4.0)
-		_resident_companion(r["id"])
-		_check_revival()
-		Game.save_game())
+	tw.tween_callback(_finish_resident_join.bind(walker.get_instance_id(), r.duplicate(true)))
 	if r["id"] == "fishers":
 		get_tree().create_timer(3.2).timeout.connect(func():
 			if not Game.keys["sea"]:
 				Game.keys["sea"] = true
 				Sfx.play("fanfare_big")
 				hud.event("어부 형제가 「바다의 노래」 를 가르쳐 줬다!! …이정표가 반응한다?", 6.0))
+
+func _finish_resident_join(instance_id: int, resident: Dictionary) -> void:
+	# 걷는 도중 부흥 재건축이 끼어들어도 해제된 노드를 캡처하지 않는다.
+	var walker := instance_from_id(instance_id) as Sprite2D
+	if walker != null:
+		walker.queue_free()
+	var building: String = resident["building"]
+	if building == "" or not (base_nodes.has(building) and is_instance_valid(base_nodes[building])):
+		_place_resident(resident, true)
+	Sfx.play("build")
+	hud.speech_bubble("「%s」" % String(resident["join"]), BUILD_POS.get(building, Vector2(108, 300)) + Vector2(12, -18), 3.5)
+	hud.event(resident["join"], 4.0)
+	_resident_companion(resident["id"])
+	_check_revival()
+	Game.save_game()
 
 # ================================================================ 칭호 + 도전과제식 훈장 (v3.2 §B-8, §C)
 
@@ -1722,7 +1716,7 @@ func _resident_companion(_rid: String) -> void:
 var _last_revival_stage := -1
 
 func _check_revival() -> void:
-	# 합류 인원 임계점 → 마을이 물리적으로 확장된다 (v3.2: 4단계)
+	# 건설물 임계점 → 마을이 물리적으로 확장된다 (v4.0: 4단계)
 	var s := _revival_stage()
 	if _last_revival_stage < 0:
 		_last_revival_stage = s
@@ -2247,7 +2241,7 @@ func _ending_gather() -> void:
 		# 주민들
 		for r in RESIDENTS:
 			if Game.residents.get(r["id"], false) and idx < spots.size():
-				_ending_cast_sprite("res://assets/NPCs/village_chief.png",
+				_ending_cast_sprite("res://assets/npcs/village_chief.png",
 					Color(randf_range(0.7, 1.0), randf_range(0.7, 1.0), randf_range(0.7, 1.0)), spots[idx])
 				idx += 1
 		# 동료들 (파티는 이미 서 있다 — 대기 인원만)
@@ -2416,24 +2410,27 @@ func buy_catalog(id: String) -> bool:
 func _npc_movein(npc_name: String, dest: Vector2) -> void:
 	# 새 건물의 주인이 마을 밖에서 걸어 들어온다
 	var walker := Sprite2D.new()
-	walker.texture = load("res://assets/NPCs/village_chief.png")
+	walker.texture = load("res://assets/npcs/village_chief.png")
 	walker.modulate = Color(randf_range(0.7, 1.0), randf_range(0.7, 1.0), randf_range(0.7, 1.0))
 	walker.position = Vector2(108, 352)
 	walker.offset = Vector2(0, -13)
 	base_root.add_child(walker)
 	var tw := create_tween()
 	tw.tween_property(walker, "position", dest, 2.0)
-	tw.tween_callback(func():
-		if walker != null and is_instance_valid(walker):
-			walker.queue_free()
-		# 걷는 도중 부흥 재건축이 끼면 _build_village가 이미 npc를 세워 뒀다
-		for c in base_root.get_children():
-			if c is Interactable and c.kind == "resident" and c.position.distance_to(dest) < 6.0:
-				return
-		var npc := _add_thing(base_root, "resident", dest)
-		npc.resident_name = npc_name
-		npc.spawn_pop()
-		Sfx.play("pop", 1.4))
+	tw.tween_callback(_finish_npc_movein.bind(walker.get_instance_id(), npc_name, dest))
+
+func _finish_npc_movein(instance_id: int, npc_name: String, dest: Vector2) -> void:
+	var walker := instance_from_id(instance_id) as Sprite2D
+	if walker != null:
+		walker.queue_free()
+	# 걷는 도중 부흥 재건축이 끼면 _build_village가 이미 NPC를 세워 뒀다.
+	for c in base_root.get_children():
+		if c is Interactable and c.kind == "resident" and c.position.distance_to(dest) < 6.0:
+			return
+	var npc := _add_thing(base_root, "resident", dest)
+	npc.resident_name = npc_name
+	npc.spawn_pop()
+	Sfx.play("pop", 1.4)
 
 func _bump_scarecrow(it: Interactable) -> void:
 	# v4.1: 허수아비 = 단련 — 두드리면 30초간 전원 공격력 +25% (훈련소 연동)
@@ -2449,7 +2446,7 @@ func _bump_scarecrow(it: Interactable) -> void:
 
 const GUIDE_TIPS := [
 	"전투창에 [color=#f5c542]마우스를 올리면[/color] 그 창의 아군이 힘을 내. 여러 창을 번갈아 주시하는 게 요령이야.",
-	"[color=#f5c542]황금 슬라임[/color]이 나타나면 도망가기 전에 마구 문질러(클릭) 붙잡아! 교회 「황금의 손길」이 필요해.",
+	"[color=#f5c542]황금 슬라임[/color]이 나타나면 도망가기 전에 마구 문질러(클릭) 붙잡아! 교회 「황금의 손길」은 포획을 더 빠르게 해 줘.",
 	"쓰러진 몬스터의 [color=#f5c542]수배서[/color]를 게시판에서 모으면 그 필드의 [color=#ef476f]지배자[/color]의 결계가 풀려.",
 	"작은 [color=#f5c542]메달[/color]은 항아리·상자·발굴에서 나와. 메달왕에게 가져가면 훈장으로 바꿔 줘.",
 	"[color=#f5c542]훈장[/color]은 도전과제처럼 습관이 모이면 얻어. 촌장 옆에서 여섯 개까지 달 수 있지.",

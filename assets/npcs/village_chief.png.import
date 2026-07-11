@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://cwmjm3pxn5i3v"
-path="res://.godot/imported/Grass_Middle.png-b2db0e0a98dd992f1dc9354d8baa9f77.ctex"
+uid="uid://c1hailhtq52e5"
+path="res://.godot/imported/village_chief.png-5c990a023af4ad597fe8be845e7f7cb2.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/Tiles/Grass_Middle.png"
-dest_files=["res://.godot/imported/Grass_Middle.png-b2db0e0a98dd992f1dc9354d8baa9f77.ctex"]
+source_file="res://assets/npcs/village_chief.png"
+dest_files=["res://.godot/imported/village_chief.png-5c990a023af4ad597fe8be845e7f7cb2.ctex"]
 
 [params]
 

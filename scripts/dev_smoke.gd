@@ -15,6 +15,9 @@ func _run() -> void:
 		return
 	await get_tree().create_timer(1.2).timeout
 	print("[SMOKE] 시작 — 주민 %d명" % Game.resident_count())
+	assert(Game.save_path.contains("smoke") and Game.options_path.contains("smoke"))
+	for node in get_tree().get_nodes_in_group("hoverable"):
+		assert(not (node is Interactable and node.kind == "cheatpot"))
 
 	# 0) 공개 스케줄 — 촌장 대화로 설명창, 첫 골드로 카운터, 골드 50으로 부탁 개방
 	assert(not Game.ui_unlocked["desc"])
@@ -564,7 +567,8 @@ func _run() -> void:
 	# 17) v3.3 — 세이브 슬롯 메타 + 옵션 ConfigFile
 	var meta: Dictionary = Game.slot_meta(Game.save_slot)
 	assert(meta["exists"] and String(meta["name"]) == "테스트용사")
-	assert(int(meta["revival"]) >= 2)
+	assert(int(meta["revival"]) == Game.revival_stage())
+	assert(FileAccess.file_exists(Game.save_path + ".bak"))
 	var ts_save: int = int(Game.opt["text_speed"])
 	Game.opt["text_speed"] = 0
 	Game.save_options()
@@ -584,6 +588,9 @@ func _run() -> void:
 	await get_tree().create_timer(62.0).timeout
 	assert(Game.ending_seen)
 	assert(not main._ending_playing)
+	Game.ending_seen = false
+	Game.load_game()
+	assert(Game.ending_seen)  # 재실행 후에도 교회의 2주차 모험이 남는다
 	print("[SMOKE] 엔딩/크레딧 OK — 늦잠까지 확인")
 
 	# 19) v3.3 — 2주차 모험 (뉴게임+ — 배율 없음, 시작 부스트만)

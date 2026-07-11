@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://ddpniiffq63i7"
-path="res://.godot/imported/Cliff_Tile.png-63368028f0e34bf79981977c2e52f0b7.ctex"
+uid="uid://xw8b4n6yw5sm"
+path="res://.godot/imported/Path_Middle.png-42337add9e0c4751bae6494d42425220.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/Tiles/Cliff_Tile.png"
-dest_files=["res://.godot/imported/Cliff_Tile.png-63368028f0e34bf79981977c2e52f0b7.ctex"]
+source_file="res://assets/tiles/Path_Middle.png"
+dest_files=["res://.godot/imported/Path_Middle.png-42337add9e0c4751bae6494d42425220.ctex"]
 
 [params]
 

@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://ysyp0f27mk6x"
-path="res://.godot/imported/Water_Tile.png-2d85a7d7ca57be15a9945a26f58558af.ctex"
+uid="uid://ddpniiffq63i7"
+path="res://.godot/imported/Cliff_Tile.png-be8346eb27541c94cde5521913adc535.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/Tiles/Water_Tile.png"
-dest_files=["res://.godot/imported/Water_Tile.png-2d85a7d7ca57be15a9945a26f58558af.ctex"]
+source_file="res://assets/tiles/Cliff_Tile.png"
+dest_files=["res://.godot/imported/Cliff_Tile.png-be8346eb27541c94cde5521913adc535.ctex"]
 
 [params]
 

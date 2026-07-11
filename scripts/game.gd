@@ -10,10 +10,15 @@ signal party_wiped
 signal upgrades_changed
 
 const MAX_WINDOWS_HARD := 8
+const SAVE_VERSION := 6
+const MIN_SUPPORTED_SAVE_VERSION := 4
+const REVIVAL_STEPS := [4, 8, 12, 15]
 
 # ---------------------------------------------------------------- 세이브 3슬롯 (v3.3 §C — 드퀘3 문법)
 var save_slot := 1
 var save_path := "user://appears_save_1.json"
+var options_path := "user://options.cfg"
+var _smoke_mode := false
 # 타이틀→게임 전환용 일시 플래그 (저장 안 함)
 var skip_title := false   # 씬 리로드 후 타이틀 건너뛰고 바로 게임
 var need_intro := false   # 새 모험 — 이름 입력+인트로부터
@@ -21,15 +26,18 @@ var skip_popin_once := false  # 팝인 1회 생략 (프레스티지 직행 등)
 
 func set_slot(i: int) -> void:
 	save_slot = clampi(i, 1, 3)
-	save_path = "user://appears_save_%d.json" % save_slot
+	save_path = _slot_path(save_slot)
+
+func _slot_path(i: int) -> String:
+	if _smoke_mode:
+		return "user://appears_smoke_save.json"
+	return "user://appears_save_%d.json" % clampi(i, 1, 3)
 
 # ---------------------------------------------------------------- 옵션 (v3.3 §D — 세이브와 분리, 전 슬롯 공통)
 var opt := {"bgm": 6, "sfx": 8, "fullscreen": false, "text_speed": 2, "shake": true, "lang": "ko"}
-const OPT_PATH := "user://options.cfg"
-
 func load_options() -> void:
 	var cf := ConfigFile.new()
-	if cf.load(OPT_PATH) != OK:
+	if cf.load(options_path) != OK:
 		return
 	for k in opt.keys():
 		opt[k] = cf.get_value("opt", k, opt[k])
@@ -42,7 +50,7 @@ func save_options() -> void:
 	for k in opt.keys():
 		cf.set_value("opt", k, opt[k])
 	cf.set_value("opt", "last_slot", save_slot)
-	cf.save(OPT_PATH)
+	cf.save(options_path)
 
 func apply_options() -> void:
 	var sfx := get_node_or_null("/root/Sfx")
@@ -89,7 +97,7 @@ const COMPANIONS := {
 		"pdesc": "훔치기 — 골드 배율 상승 + 가끔 작은 메달", "hint": "서사시 속에서 나타난다"},
 	"monkf":   {"name": "무도가",   "regular": true, "passive": "crit",  "atk": 6, "hp": 28, "crit": 0.20, "aggro": 1.2, "tex": "res://assets/characters/hero.png",   "frame_h": 26, "tint": Color(1.15, 0.95, 0.6), "weapon": "무도가의 권갑",
 		"pdesc": "회심 — 파티의 크리티컬 확률 대폭 상승", "hint": "큰 부를 이룬 자를 시험하러 온다"},
-	"druid":   {"name": "드루이드", "regular": true, "passive": "charm", "atk": 3, "hp": 24, "crit": 0.05, "aggro": 1.0, "tex": "res://assets/NPCs/village_chief.png", "frame_h": 26, "tint": Color(0.6, 1.1, 0.6), "weapon": "드루이드의 낫",
+	"druid":   {"name": "드루이드", "regular": true, "passive": "charm", "atk": 3, "hp": 24, "crit": 0.05, "aggro": 1.0, "tex": "res://assets/npcs/village_chief.png", "frame_h": 26, "tint": Color(0.6, 1.1, 0.6), "weapon": "드루이드의 낫",
 		"pdesc": "매혹 — 승리 시 가끔 적이 아군이 되어 따라온다", "hint": "서사시 제 1절"},
 }
 const CLASS_DEFS := COMPANIONS  # 하위 호환 별칭
@@ -296,7 +304,7 @@ var golden_info := false             # 게시판 "황금 슬라임 목격 정보
 var ending_seen := false
 
 # v3.0 — 주민(시설의 화신) / 열쇠 / 작은 메달 / 부탁
-var residents := {}                  # id → true (영입됨). 주민 수 = 마을의 진행바
+var residents := {}                  # id → true (영입됨). 주민은 기능/서사의 주체, 부흥 단계는 건설물 기준
 var kill_counts := {}                # 몬스터 id → 처치 수 (부탁 퀘스트용)
 var medals_small := 0                # 작은 메달 (골드 교환 불가 수집품)
 var medals_spent := 0                # 메달왕에게 이미 교환한 누적치
@@ -309,14 +317,27 @@ var ui_unlocked := {"desc": false, "gold": false, "party": false, "quest": false
 
 func built_count() -> int:
 	# v4.0 §B-4: 부흥 단계 = 건설된 건물·기물 수 ("건물이 곧 진행바")
-	var n := 0
-	for k in buildings.keys():
-		if buildings[k]:
-			n += 1
-	for k in fixtures.keys():
-		if fixtures[k]:
-			n += 1
-	return n + extra_pots
+	return built_count_from(buildings, fixtures, extra_pots)
+
+func built_count_from(saved_buildings: Dictionary, saved_fixtures: Dictionary, saved_extra_pots: int) -> int:
+	var total := maxi(0, saved_extra_pots)
+	for value in saved_buildings.values():
+		if bool(value):
+			total += 1
+	for value in saved_fixtures.values():
+		if bool(value):
+			total += 1
+	return total
+
+func revival_stage_from_count(count: int) -> int:
+	var stage := 0
+	for threshold in REVIVAL_STEPS:
+		if count >= threshold:
+			stage += 1
+	return stage
+
+func revival_stage() -> int:
+	return revival_stage_from_count(built_count())
 
 func inn_rest_cost() -> int:
 	# v4.1: 쉬어가기 유료화 — 잃은 HP 비율만큼 현재 골드의 %를 낸다 (최소 1G, 상한 완만)
@@ -486,10 +507,18 @@ func poster_cost(field: int, i: int) -> int:
 # ---------------------------------------------------------------- init
 
 func _ready() -> void:
+	_smoke_mode = OS.get_environment("AAA_SMOKE") == "1"
+	if _smoke_mode:
+		options_path = "user://appears_smoke_options.cfg"
+		save_path = _slot_path(1)
 	load_options()
-	_migrate_legacy_save()
 	_reset_party()
-	load_game()
+	if _smoke_mode:
+		# 자동 테스트는 실제 모험의 서와 옵션을 읽거나 덮어쓰지 않는다.
+		reset_all()
+	else:
+		_migrate_legacy_save()
+		load_game()
 
 func _migrate_legacy_save() -> void:
 	# v3.2 이전 단일 세이브 → 슬롯 1로 이사 (v3.3)
@@ -503,39 +532,37 @@ func _migrate_legacy_save() -> void:
 				g.store_string(txt)
 				g.close()
 
+func _read_save_data(path: String) -> Dictionary:
+	# 본 파일이 비어 있거나 손상됐으면 마지막 정상 백업을 자동으로 사용한다.
+	for candidate in [path, path + ".bak"]:
+		if not FileAccess.file_exists(candidate):
+			continue
+		var f := FileAccess.open(candidate, FileAccess.READ)
+		if f == null:
+			continue
+		var parsed = JSON.parse_string(f.get_as_text())
+		f.close()
+		if parsed is Dictionary:
+			return parsed
+	return {}
+
 func slot_meta(i: int) -> Dictionary:
 	# 슬롯 목록 표시용 경량 메타 (v3.3 §C)
-	var p := "user://appears_save_%d.json" % i
-	if not FileAccess.file_exists(p):
+	var d := _read_save_data(_slot_path(i))
+	if d.is_empty():
 		return {"exists": false}
-	var f := FileAccess.open(p, FileAccess.READ)
-	if f == null:
-		return {"exists": false}
-	var parsed = JSON.parse_string(f.get_as_text())
-	f.close()
-	if not parsed is Dictionary:
-		return {"exists": false}
-	var d: Dictionary = parsed
-	var joins := 0
-	var res: Dictionary = d.get("residents", {})
-	for k in res.keys():
-		if res[k]:
-			joins += 1
-	var comp: Dictionary = d.get("companions_owned", {})
-	for k in comp.keys():
-		if comp[k]:
-			joins += 1
-	joins = maxi(0, joins - 1)  # 용사 제외
-	var stage := 0
-	for t in [3, 7, 10, 15]:
-		if joins >= t:
-			stage += 1
+	var saved_buildings: Dictionary = d.get("buildings", {})
+	var saved_fixtures: Dictionary = d.get("fixtures", {})
+	# v4.0 이전 저장의 게시판 마이그레이션도 슬롯 미리보기에 반영한다.
+	if bool(saved_buildings.get("board", false)):
+		saved_fixtures["board"] = true
+	var construction_count := built_count_from(saved_buildings, saved_fixtures, int(d.get("extra_pots", 0)))
 	return {
 		"exists": true,
 		"name": String(d.get("hero_name", "용사")),
 		"level": int(d.get("level", 1)),
 		"playtime": float(d.get("playtime", 0.0)),
-		"revival": stage,
+		"revival": revival_stage_from_count(construction_count),
 		"run": int(d.get("run_count", 1)),
 	}
 
@@ -544,6 +571,10 @@ func new_game(slot: int) -> void:
 	set_slot(slot)
 	if FileAccess.file_exists(save_path):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path))
+	if FileAccess.file_exists(save_path + ".bak"):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path + ".bak"))
+	if FileAccess.file_exists(save_path + ".tmp"):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path + ".tmp"))
 	reset_all()
 	save_options()  # last_slot 기억
 
@@ -618,6 +649,8 @@ func reset_all() -> void:
 	silver_seen = false
 	titles = []
 	casino_up = {"jackpot": 0, "consol": 0, "hold": 0}
+	scarecrow_until = 0.0
+	_building_ack.clear()
 	for k in stats.keys():
 		stats[k] = 0
 	_reset_party()
@@ -1137,6 +1170,8 @@ func do_prestige() -> void:
 	lunch_until = 0.0
 	silver_seen = false
 	casino_up = {"jackpot": 0, "consol": 0, "hold": 0}
+	scarecrow_until = 0.0
+	_building_ack.clear()
 	# 영구 유지: 훈장 도감/장착, 서사시 이력, 도감(discovered), 필살작 기록, 카지노 상한, book_seen, combo_hint_known, hero_name, titles, stats, tactic_known
 	_reset_party()
 	# 2주차 시작 부스트 — 기사가 배웅 나와 있고, 엄마가 여비를 찔러준다
@@ -1155,7 +1190,7 @@ func save_game() -> void:
 	for m in members:
 		mem_save.append({"cls": m["cls"], "weapon_lv": m["weapon_lv"], "hp": m["hp"], "ghost": m["ghost"]})
 	var data := {
-		"version": 6,
+		"version": SAVE_VERSION,
 		"gold": gold, "total_earned": total_earned,
 		"level": level, "exp": exp, "run_count": run_count, "kills": kills,
 		"up": up,
@@ -1163,12 +1198,12 @@ func save_game() -> void:
 		"posters_f": posters_f, "extra_pots": extra_pots,
 		"buildings": buildings, "fixtures": fixtures, "recruits_spawned": recruits_spawned,
 		"discovered": discovered, "golden_first_done": golden_first_done,
-		"golden_info": golden_info,
+		"golden_info": golden_info, "ending_seen": ending_seen,
 		"members": mem_save,
 		"coins": coins, "epic_verses": epic_verses, "smith_perfects": smith_perfects,
 		"casino_wincap": casino_wincap, "assistants": assistants,
 		"medals_owned": medals_owned, "medals_equipped": medals_equipped,
-		"ui_unlocked": ui_unlocked,
+		"ui_unlocked": ui_unlocked, "building_ack": _building_ack,
 		"residents": residents, "kill_counts": kill_counts,
 		"medals_small": medals_small, "medals_spent": medals_spent,
 		"keys": keys, "opened": opened, "signpost_seen": signpost_seen,
@@ -1186,23 +1221,39 @@ func save_game() -> void:
 		"roto_shield": roto_shield, "roto_helm": roto_helm, "silver_seen": silver_seen,
 		"titles": titles, "casino_up": casino_up, "stats": stats,
 	}
-	var f := FileAccess.open(save_path, FileAccess.WRITE)
-	if f:
-		f.store_string(JSON.stringify(data))
-		f.close()
+	var temp_path := save_path + ".tmp"
+	var backup_path := save_path + ".bak"
+	var f := FileAccess.open(temp_path, FileAccess.WRITE)
+	if f == null:
+		push_error("세이브 임시 파일을 열 수 없습니다: %s" % temp_path)
+		return
+	f.store_string(JSON.stringify(data))
+	f.flush()
+	f.close()
+	var abs_save := ProjectSettings.globalize_path(save_path)
+	var abs_temp := ProjectSettings.globalize_path(temp_path)
+	var abs_backup := ProjectSettings.globalize_path(backup_path)
+	if FileAccess.file_exists(backup_path):
+		DirAccess.remove_absolute(abs_backup)
+	if FileAccess.file_exists(save_path):
+		var backup_error := DirAccess.copy_absolute(abs_save, abs_backup)
+		if backup_error != OK:
+			push_warning("기존 세이브 백업에 실패했습니다: %s" % error_string(backup_error))
+		var remove_error := DirAccess.remove_absolute(abs_save)
+		if remove_error != OK:
+			push_error("기존 세이브 교체 준비에 실패했습니다: %s" % error_string(remove_error))
+			return
+	var rename_error := DirAccess.rename_absolute(abs_temp, abs_save)
+	if rename_error != OK:
+		push_error("새 세이브 적용에 실패했습니다: %s" % error_string(rename_error))
+		if FileAccess.file_exists(backup_path):
+			DirAccess.copy_absolute(abs_backup, abs_save)
 
 func load_game() -> void:
-	if not FileAccess.file_exists(save_path):
+	var d := _read_save_data(save_path)
+	if d.is_empty():
 		return
-	var f := FileAccess.open(save_path, FileAccess.READ)
-	if f == null:
-		return
-	var parsed = JSON.parse_string(f.get_as_text())
-	f.close()
-	if not parsed is Dictionary:
-		return
-	var d: Dictionary = parsed
-	if int(d.get("version", 1)) < 4:
+	if int(d.get("version", 1)) < MIN_SUPPORTED_SAVE_VERSION:
 		return  # v3 이전 세이브는 구조가 달라 버린다 (프로토타입)
 	gold = int(d.get("gold", 0))
 	total_earned = int(d.get("total_earned", 0))
@@ -1222,6 +1273,7 @@ func load_game() -> void:
 			posters_f[i] = int(pf[i])
 	extra_pots = int(d.get("extra_pots", 0))
 	golden_info = bool(d.get("golden_info", false))
+	ending_seen = bool(d.get("ending_seen", false))
 	residents = d.get("residents", {})
 	kill_counts = d.get("kill_counts", {})
 	medals_small = int(d.get("medals_small", 0))
@@ -1264,6 +1316,7 @@ func load_game() -> void:
 	var uiu: Dictionary = d.get("ui_unlocked", {})
 	for k in ui_unlocked.keys():
 		ui_unlocked[k] = bool(uiu.get(k, false))
+	_building_ack = d.get("building_ack", {})
 	# v3.1 동료 데이터 (v4 세이브는 members 목록에서 유추 — 마이그레이션)
 	var mem: Array = d.get("members", [])
 	if d.has("companions_owned"):

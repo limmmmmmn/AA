@@ -32,10 +32,10 @@ const TEXTURES := {
 	"shop": "res://assets/objects/shop_1.png",
 	"smith": "res://assets/objects/black_smith.png",
 	"church": "res://assets/objects/tower.png",
-	"chief": "res://assets/NPCs/village_chief.png",
+	"chief": "res://assets/npcs/village_chief.png",
 	"castle": "res://assets/objects/castle.png",
 	"casino": "res://assets/objects/shop_1.png",
-	"bard": "res://assets/NPCs/village_chief.png",
+	"bard": "res://assets/npcs/village_chief.png",
 	"gate": "res://assets/objects/castle.png",
 }
 
@@ -46,10 +46,6 @@ func setup(p_kind: String, p_recruit_cls: String = "") -> void:
 
 func _ready() -> void:
 	match kind:
-		"cheatpot":  # DEBUG: 금색 치트 항아리
-			_make_sprite("pot", Rect2(0, 0, 14, 15))
-			_sprite.self_modulate = Color(2.2, 1.8, 0.3)
-			_sprite.scale = Vector2(1.4, 1.4)
 		"pot":
 			passive = true
 			_make_sprite("pot", Rect2(0, 0, 14, 15))
@@ -91,7 +87,7 @@ func _ready() -> void:
 			_make_sprite("chest", Rect2(0, 0, 16, 18))
 			_sprite.self_modulate = Color(1.0, 0.45, 0.45)  # 붉은 상자 — 마법의 열쇠로만
 		"resident":
-			# 주민 — 시설의 화신. 마을에 서 있는 사람 수가 곧 진행바
+			# 주민 — 시설과 사건을 세계 안에서 보여 주는 서사적 주체
 			_make_sprite("chief", Rect2())
 			_sprite.self_modulate = Color(randf_range(0.65, 1.0), randf_range(0.65, 1.0), randf_range(0.65, 1.0))
 		"medalking":
@@ -402,7 +398,6 @@ func hover_name() -> String:
 		"fountain": return "분수"
 		"medalking": return "메달왕"
 		"resident": return resident_name
-		"cheatpot": return "치트 항아리"
 		"bank": return "은행"
 		"weaponshop": return "무기점"
 		"frogstatue": return "개구리 석상"
@@ -464,8 +459,6 @@ func flavor() -> String:
 			return "메달왕. 작은 메달이라면 사족을 못 쓴다."
 		"resident":
 			return "%s. 마을의 일원이 되었다." % resident_name
-		"cheatpot":
-			return "치트 항아리. 두드릴 때마다 1000 G. (디버그)"
 		"bank":
 			return "은행이다. 예금은 전멸해도 안전하다. (Space)"
 		"weaponshop":

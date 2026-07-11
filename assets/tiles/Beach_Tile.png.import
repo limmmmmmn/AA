@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://c1hailhtq52e5"
-path="res://.godot/imported/village_chief.png-fee2e78cdbe7ab125d2f63d915a2225c.ctex"
+uid="uid://c1hncrsq6bvi7"
+path="res://.godot/imported/Beach_Tile.png-ada8a91c0c73a507404c5b4088b8aa0c.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/NPCs/village_chief.png"
-dest_files=["res://.godot/imported/village_chief.png-fee2e78cdbe7ab125d2f63d915a2225c.ctex"]
+source_file="res://assets/tiles/Beach_Tile.png"
+dest_files=["res://.godot/imported/Beach_Tile.png-ada8a91c0c73a507404c5b4088b8aa0c.ctex"]
 
 [params]
 

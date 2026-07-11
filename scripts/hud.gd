@@ -395,7 +395,7 @@ func _tick_event(delta: float) -> void:
 func _portrait_tex(id: String) -> Texture2D:
 	if id == "":
 		return null
-	var path := "res://assets/NPCs/village_chief.png"
+	var path := "res://assets/npcs/village_chief.png"
 	var tex: Texture2D = load(path)
 	var atlas := AtlasTexture.new()
 	atlas.atlas = tex
